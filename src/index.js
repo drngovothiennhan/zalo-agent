@@ -237,7 +237,14 @@ async function handleUpdate(env, update, origin) {
   if (!chatId || msg.from?.is_bot) return trace("skip", { reason: "no chat id or from bot" });
 
   if (!allowedIds(env).includes(String(userId))) {
-    if (isGroup) return trace("skip", { reason: "group sender not allowed", userId });
+    if (isGroup) {
+      // Only answer strangers in a group when they call the bot, so family members can get their ID
+      const t = String(msg.text || msg.caption || "");
+      if (!(t.includes("@") || t.startsWith("/") || norm(t).startsWith("bot"))) return trace("skip", { reason: "group sender not allowed", userId });
+      const who = msg.from?.display_name || msg.from?.name || "bạn";
+      await sendText(env, chatId, `${who} chưa có trong danh sách dùng bot. ID Zalo của ${who} là: ${userId}\nNhờ anh Nhân thêm ID này vào là dùng được nhé.`);
+      return;
+    }
     await sendText(
       env,
       chatId,
