@@ -165,12 +165,16 @@ async function handleCommand(env, ctx) {
     }
     await sendText(env, chatId, `Đang soạn file ${kind === "word" ? "Word" : "Excel"}, bạn chờ khoảng 20–40 giây nhé…`);
     try {
-      const f = await makeFile(env, origin, kind, request);
+      const templates = kind === "word" ? await searchKb(env, request, 3) : [];
+      const f = await makeFile(env, origin, kind, request, templates);
       await sendText(
         env,
         chatId,
         `Đã tạo xong: ${f.title}\nTải về: ${f.link}\n` +
-          (kind === "word" ? "(Mở bằng Word/WPS; muốn sửa thì sửa thoải mái rồi lưu lại.)" : "(File CSV mở trực tiếp bằng Excel/Google Sheets.)")
+          (f.usedTemplates?.length ? `Có tham khảo: ${f.usedTemplates.join(", ")}\n` : "") +
+          (kind === "word"
+            ? "(Bản nháp: mở bằng Word/WPS, điền các chỗ \"…\" và rà soát kỹ trước khi trình ký.)"
+            : "(File CSV mở trực tiếp bằng Excel/Google Sheets.)")
       );
       await db.saveTurn(env, chatId, text, `[Đã tạo file ${kind}: ${f.title}]`);
     } catch (e) {

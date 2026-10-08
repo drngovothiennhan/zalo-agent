@@ -48,11 +48,61 @@ export async function serveFile(env, url) {
 }
 
 // ---------- Word / Excel ----------
-const WORD_SYSTEM = `Bạn soạn văn bản tiếng Việt chuẩn mực để xuất ra file Word. Thời điểm hiện tại: {now}.
-Trả về DUY NHẤT phần thân HTML (không có <html>, <head>, <body>, không giải thích, không dùng Markdown).
-Chỉ dùng các thẻ: h1, h2, h3, p, b, i, u, ul, ol, li, table, tr, th, td, br.
-Dòng đầu tiên phải là <h1> với tiêu đề văn bản. Biểu mẫu/sổ sách thì dùng <table> có hàng tiêu đề <th>, chừa ô trống để điền tay.
-Văn bản hành chính trường học theo thể thức Việt Nam khi phù hợp (quốc hiệu, tên đơn vị, ngày tháng, nơi nhận, chữ ký).`;
+const WORD_SYSTEM = `Bạn là chuyên viên văn thư, soạn văn bản tiếng Việt để xuất ra file Word. Thời điểm hiện tại: {now}.
+Trả lời ĐÚNG theo khuôn dưới đây, mỗi trường bắt đầu bằng @@TÊN_TRƯỜNG:, không giải thích, không Markdown, không bọc trong \`\`\`.
+@@HANH_CHINH: có | không   (có = văn bản hành chính: kế hoạch, quyết định, thông báo, báo cáo, tờ trình, công văn, biên bản, giấy mời…; không = tài liệu thường: thực đơn, bài viết, ghi chú…)
+@@CO_QUAN_CHU_QUAN: tên cơ quan cấp trên trực tiếp, VIẾT HOA (để trống nếu không có)
+@@CO_QUAN_BAN_HANH: tên cơ quan/đơn vị ban hành, VIẾT HOA
+@@SO_KY_HIEU: ví dụ "Số: …/KH-UBND" hoặc "Số: …/QĐ-MN" (để dấu … cho người dùng tự điền số)
+@@DIA_DANH_NGAY: ví dụ "…, ngày … tháng … năm 2026"
+@@LOAI_VAN_BAN: tên loại văn bản VIẾT HOA, ví dụ KẾ HOẠCH, QUYẾT ĐỊNH, BIÊN BẢN, THÔNG BÁO (để trống với công văn)
+@@TRICH_YEU: trích yếu nội dung, ví dụ "Về việc tổ chức khám sức khỏe định kỳ cho trẻ năm học 2026-2027"
+@@NOI_DUNG:
+(phần thân bằng HTML, chỉ dùng thẻ p, b, i, u, ul, ol, li, table, tr, th, td, br, h3. Không lặp lại phần đầu, tên loại, trích yếu hay chữ ký. Quyết định thì có phần căn cứ (in nghiêng) rồi "QUYẾT ĐỊNH:" và các Điều 1, Điều 2…; kế hoạch thì có mục đích-yêu cầu, nội dung, thời gian, kinh phí, tổ chức thực hiện; biên bản thì có thời gian, địa điểm, thành phần, nội dung, kết thúc. Biểu mẫu/sổ thì dùng table có hàng th, chừa ô trống.)
+@@NOI_NHAN: các nơi nhận, ngăn cách bằng dấu ; (ví dụ: Như Điều 3; Lưu: VT)
+@@CHUC_VU_KY: ví dụ "CHỦ TỊCH", "HIỆU TRƯỞNG", "KT. CHỦ TỊCH\\nPHÓ CHỦ TỊCH"
+@@NGUOI_KY: họ tên người ký nếu người dùng cho biết, nếu không để trống
+Quy tắc: viết đúng thể thức và văn phong hành chính Việt Nam; thông tin người dùng không cung cấp (tên cơ quan, số liệu, họ tên) thì để "…" để họ tự điền, không bịa. Căn cứ pháp lý chỉ dẫn văn bản có trong phần "Mẫu/tài liệu tham khảo" hoặc do người dùng nêu; nếu không có thì ghi "Căn cứ …" để người dùng tự điền. Nếu có mẫu tham khảo, bám sát bố cục và câu chữ của mẫu.`;
+
+function parseFields(raw) {
+  const out = {};
+  const re = /@@([A-Z_]+):[ \t]*/g;
+  const marks = [];
+  let m;
+  while ((m = re.exec(raw))) marks.push({ key: m[1], start: m.index, end: re.lastIndex });
+  marks.forEach((mk, i) => {
+    out[mk.key] = raw.slice(mk.end, i + 1 < marks.length ? marks[i + 1].start : raw.length).trim();
+  });
+  return out;
+}
+
+const esc = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const lines = (s) => esc(s).replace(/\\n|\n/g, "<br>");
+
+// Administrative document layout (thể thức văn bản hành chính, Nghị định 30/2020/NĐ-CP)
+function adminBody(f) {
+  const noTable = 'style="border:none;width:100%;border-collapse:collapse"';
+  const cell = (w, extra = "") => `style="border:none;width:${w};text-align:center;vertical-align:top;padding:0 4pt;${extra}"`;
+  const noiNhan = String(f.NOI_NHAN || "")
+    .split(/;|\n/)
+    .map((s) => s.replace(/^[-–•\s]+/, "").trim())
+    .filter(Boolean);
+  const header = `<table ${noTable}><tr>
+<td ${cell("40%")}>${f.CO_QUAN_CHU_QUAN ? `<span style="font-size:13pt">${lines(f.CO_QUAN_CHU_QUAN)}</span><br>` : ""}<b style="font-size:13pt">${lines(f.CO_QUAN_BAN_HANH || "…")}</b><br>———<br><span style="font-size:13pt">${esc(f.SO_KY_HIEU || "Số: …")}</span></td>
+<td ${cell("60%")}><b style="font-size:12pt">CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</b><br><b style="font-size:13pt">Độc lập - Tự do - Hạnh phúc</b><br>———————<br><i style="font-size:13pt">${esc(f.DIA_DANH_NGAY || "…, ngày … tháng … năm …")}</i></td>
+</tr></table>`;
+  const title =
+    (f.LOAI_VAN_BAN ? `<p style="text-align:center;margin:18pt 0 0"><b style="font-size:14pt">${esc(f.LOAI_VAN_BAN.toUpperCase())}</b></p>` : "") +
+    (f.TRICH_YEU
+      ? `<p style="text-align:center;margin:${f.LOAI_VAN_BAN ? "0" : "12pt 0 0"}"><b style="font-size:14pt">${esc(f.TRICH_YEU)}</b></p><p style="text-align:center;margin:0">———</p>`
+      : "");
+  const body = `<div class="nd" style="text-align:justify">${String(f.NOI_DUNG || "").replace(/<\/?(html|head|body|script|style)[^>]*>/gi, "")}</div>`;
+  const footer = `<table ${noTable} style="margin-top:12pt"><tr>
+<td style="border:none;width:50%;vertical-align:top;font-size:12pt">${noiNhan.length ? `<b><i>Nơi nhận:</i></b><br>${noiNhan.map((x) => `- ${esc(x)};`).join("<br>")}` : ""}</td>
+<td ${cell("50%")}><b style="font-size:14pt">${lines(f.CHUC_VU_KY || "…")}</b><br><i>(Ký, ghi rõ họ tên${/biên bản/i.test(f.LOAI_VAN_BAN || "") ? "" : ", đóng dấu"})</i><br><br><br><br><b>${esc(f.NGUOI_KY || "")}</b></td>
+</tr></table>`;
+  return header + title + body + footer;
+}
 
 const EXCEL_SYSTEM = `Bạn tạo bảng tính tiếng Việt. Thời điểm hiện tại: {now}.
 Trả về DUY NHẤT nội dung CSV (dấu phẩy ngăn cách, mỗi dòng một hàng, ô có dấu phẩy thì đặt trong ngoặc kép), không giải thích, không Markdown.
@@ -63,25 +113,40 @@ function wordHtml(title, inner) {
 <head><meta charset="utf-8"><title>${title.replace(/</g, "")}</title>
 <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
 <style>
-@page{size:21cm 29.7cm;margin:2cm 2cm 2cm 3cm}
-body{font-family:"Times New Roman",serif;font-size:13pt;line-height:1.4}
-h1{font-size:16pt;text-align:center;text-transform:uppercase}h2{font-size:14pt}h3{font-size:13pt}
+@page{size:21cm 29.7cm;margin:2cm 1.5cm 2cm 3cm}
+body{font-family:"Times New Roman",serif;font-size:14pt;line-height:1.3}
+p{margin:0 0 6pt}
+.nd p{text-indent:1cm}
+h1{font-size:16pt;text-align:center;text-transform:uppercase}h2{font-size:14pt}h3{font-size:14pt}
 table{border-collapse:collapse;width:100%}th,td{border:1px solid #000;padding:4pt 6pt;vertical-align:top}th{background:#eee}
 </style></head><body>${inner}</body></html>`;
 }
 
-export async function makeFile(env, origin, kind, request) {
+// templates: knowledge-base snippets (e.g. uploaded "Mẫu …" documents) to follow
+export async function makeFile(env, origin, kind, request, templates = []) {
   const now = nowDescription();
   if (kind === "word") {
-    let html = stripFences(await complete(env, WORD_SYSTEM.replace("{now}", now), request, { max_tokens: 2500 }));
-    html = html.replace(/<\/?(html|head|body)[^>]*>/gi, "");
-    const title = (/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] || "Tài liệu").replace(/<[^>]+>/g, "").trim();
+    const ref = templates.length
+      ? `\n\nMẫu/tài liệu tham khảo tìm được trong kho tài liệu (dùng nếu liên quan):\n${templates.map((t) => `--- "${t.doc_name}" ---\n${t.content}`).join("\n\n")}`
+      : "";
+    const raw = stripFences(await complete(env, WORD_SYSTEM.replace("{now}", now), request + ref, { max_tokens: 3500 }));
+    const f = parseFields(raw);
+    let inner;
+    let title;
+    if (f.NOI_DUNG !== undefined && /^c[oó]/i.test(f.HANH_CHINH || "")) {
+      inner = adminBody(f);
+      title = [f.LOAI_VAN_BAN, f.TRICH_YEU].filter(Boolean).join(" ") || "Văn bản";
+    } else {
+      const body = (f.NOI_DUNG !== undefined ? f.NOI_DUNG : raw).replace(/<\/?(html|head|body|script|style)[^>]*>/gi, "");
+      title = f.TRICH_YEU || f.LOAI_VAN_BAN || (/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(body)?.[1] || "").replace(/<[^>]+>/g, "").trim() || request.slice(0, 60);
+      inner = (/<h1/i.test(body) ? "" : `<h1>${esc(title)}</h1>`) + body;
+    }
     const link = await storeFile(env, origin, {
-      body: "﻿" + wordHtml(title, html),
+      body: "﻿" + wordHtml(title, inner),
       type: "application/msword",
       filename: `${slug(title)}.doc`,
     });
-    return { title, link };
+    return { title, link, usedTemplates: [...new Set(templates.map((t) => t.doc_name))] };
   }
   const csv = stripFences(await complete(env, EXCEL_SYSTEM.replace("{now}", now), request, { max_tokens: 2500 }));
   const firstLine = csv.split("\n")[0] || "";
