@@ -37,6 +37,41 @@ export async function searchKb(env, text, limit = 4, kind = null) {
   }
 }
 
+// Document types, most specific first ("tờ trình" files often also contain a draft decision)
+const DOC_TYPE_WORDS = ["tờ trình", "đề cương", "quyết định", "kế hoạch", "báo cáo", "biên bản", "thông báo", "công văn", "giấy mời"];
+
+// Best saved template ("mẫu") for a document request: same document type, most similar wording.
+// Returns [{ doc_name, content }] with the beginning of the whole template (header, legal bases, structure).
+export async function findTemplate(env, request, maxChars = 5000) {
+  const lower = String(request || "").toLowerCase().normalize("NFC");
+  const type = DOC_TYPE_WORDS.find((t) => lower.includes(t));
+  if (!type) return [];
+  let docId = null;
+  try {
+    // Filter by name in JS: SQLite lower() does not handle Vietnamese capitals such as "Đ"
+    const candidates = (await listDocs(env, "mau")).filter((d) => d.name.toLowerCase().normalize("NFC").includes(type));
+    if (!candidates.length) return [];
+    const q = ftsQuery(request);
+    if (q) {
+      const ids = candidates.map((d) => String(d.id));
+      const best = await env.DB.prepare(
+        `SELECT doc_id, bm25(kb_fts) AS score FROM kb_fts WHERE kb_fts MATCH ? AND doc_id IN (${ids.map(() => "?").join(",")}) ORDER BY score LIMIT 1`
+      )
+        .bind(q, ...ids)
+        .first();
+      docId = best?.doc_id ?? null;
+    }
+    if (!docId) docId = candidates[0].id;
+  } catch {
+    return [];
+  }
+  if (!docId) return [];
+  const doc = await getDoc(env, docId);
+  const text = await docText(env, docId);
+  if (!doc || !text) return [];
+  return [{ doc_name: doc.name, content: text.length > maxChars ? text.slice(0, maxChars) + "\n[…phần sau của mẫu được lược bớt…]" : text }];
+}
+
 export async function listDocs(env, kind = null) {
   const { results } = kind
     ? await env.DB.prepare("SELECT id, name, chunks, created_at, kind FROM kb_docs WHERE kind = ? ORDER BY id DESC").bind(kind).all()

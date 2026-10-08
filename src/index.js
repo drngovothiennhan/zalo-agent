@@ -6,9 +6,11 @@ import * as db from "./db.js";
 import { chat, extractReminder } from "./brain.js";
 import { parseLocal, formatLocal } from "./time.js";
 import { describeImage } from "./vision.js";
-import { searchKb, listDocs, handleKb, createDoc, addText, getDoc, docText, setKind, deleteDoc } from "./kb.js";
+import { searchKb, findTemplate, listDocs, handleKb, createDoc, addText, getDoc, docText, setKind, deleteDoc } from "./kb.js";
 import { makeFile, serveFile, weather, draw } from "./tools.js";
 import { isTemplate, wantsSave, cleanName, findFile, ingestImage, ingestFile, markLast, DOC_TYPES } from "./intake.js";
+import { runSeed } from "./seed.js";
+import SEED_MAU_UBND from "../seed/mau-ubnd-2026-10.json" with { type: "json" };
 
 const DAY = 24 * 60 * 60 * 1000;
 const REPEAT_LABEL = { none: "", daily: " (lặp lại mỗi ngày)", weekly: " (lặp lại mỗi tuần)" };
@@ -171,7 +173,8 @@ async function handleCommand(env, ctx) {
     await sendText(env, chatId, `Đang soạn file ${kind === "word" ? "Word" : "Excel"}, bạn chờ khoảng 20–40 giây nhé…`);
     try {
       // Prefer saved templates ("mẫu"), otherwise any related document
-      let templates = kind === "word" ? await searchKb(env, request, 3, "mau") : [];
+      let templates = kind === "word" ? await findTemplate(env, request) : [];
+      if (kind === "word" && !templates.length) templates = await searchKb(env, request, 3, "mau");
       if (kind === "word" && !templates.length) templates = await searchKb(env, request, 2);
       const f = await makeFile(env, origin, kind, request, templates);
       await sendText(
@@ -575,5 +578,6 @@ export default {
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runReminders(env).catch((e) => trace("cron.error", { message: String(e && e.stack) })));
+    ctx.waitUntil(runSeed(env, SEED_MAU_UBND).catch((e) => trace("seed.error", { message: String(e && e.stack) })));
   },
 };
