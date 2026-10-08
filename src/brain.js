@@ -9,7 +9,7 @@ Luôn trả lời bằng tiếng Việt, ngắn gọn, rõ ý, giọng thân thi
 Bạn hỗ trợ cả nhà: hỏi đáp đời sống, nấu ăn và thực đơn, chăm sóc sức khỏe cơ bản, bài vở của con, soạn văn bản, tóm tắt. Riêng anh Nhân còn cần hỗ trợ công việc y tế học đường (khám, tầm soát, tiêm chủng, an toàn thực phẩm, sổ kiểm thực, lưu mẫu thức ăn, sơ cấp cứu) và học YHCT.
 Thông tin y khoa chỉ mang tính tham khảo, không thay thế chẩn đoán của bác sĩ; với tình huống khẩn cấp, nhắc gọi 115 hoặc đưa người bệnh đến cơ sở y tế ngay.
 Nếu không chắc, nói rõ là không chắc; không bịa số liệu hay nguồn.
-Bot có sẵn các lệnh: "ghi nhớ: ..." để lưu ghi chú gia đình, "xem ghi chú", "nhắc tôi ... lúc ..." để đặt lịch nhắc, "xem lịch nhắc", "hướng dẫn". Nếu người dùng muốn lưu thông tin hay đặt nhắc, hãy hướng dẫn họ dùng đúng các lệnh này thay vì tự hứa sẽ nhớ.`;
+Bot có sẵn các lệnh: "ghi nhớ: ..." để lưu ghi chú gia đình, "xem ghi chú", "nhắc tôi ... lúc ..." để đặt lịch nhắc, "xem lịch nhắc", "thời tiết <nơi>", "vẽ <mô tả>", "tạo file word: <yêu cầu>", "tạo file excel: <yêu cầu>", gửi ảnh để bot đọc, "hướng dẫn". Nếu người dùng muốn lưu thông tin, đặt nhắc, xem thời tiết, vẽ tranh hay tạo file, hãy hướng dẫn họ dùng đúng các lệnh này thay vì tự hứa sẽ làm.`;
 
 function outputText(out) {
   if (!out) return "";
@@ -32,12 +32,33 @@ function notesBlock(notes) {
   return `\n\nSổ ghi nhớ của gia đình (thông tin do các thành viên lưu, hãy dùng khi liên quan):\n${lines.join("\n")}`;
 }
 
-export async function chat(env, { history, text, who, notes }) {
+function kbBlock(snippets) {
+  if (!snippets?.length) return "";
+  const parts = snippets.map((s, i) => `[${i + 1}] Trích "${s.doc_name}":\n${s.content}`);
+  return `\n\nTài liệu tham khảo tìm được trong kho tài liệu của gia đình (có thể không liên quan; chỉ dùng phần thực sự liên quan, và khi dùng thì ghi nguồn dạng "(Theo: tên tài liệu)"):\n${parts.join("\n\n")}`;
+}
+
+// Single-shot completion helper
+export async function complete(env, system, user, { max_tokens = 600, temperature } = {}) {
+  const params = {
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    max_tokens,
+  };
+  if (temperature !== undefined) params.temperature = temperature;
+  const out = await env.AI.run(env.MODEL || DEFAULT_MODEL, params);
+  return outputText(out).trim();
+}
+
+export async function chat(env, { history, text, who, notes, kb }) {
   const system =
     BASE_PROMPT +
     `\n\nThời điểm hiện tại: ${nowDescription()}.` +
     (who ? `\nNgười đang nhắn tin: ${who}.` : "") +
-    notesBlock(notes);
+    notesBlock(notes) +
+    kbBlock(kb);
   const messages = [{ role: "system", content: system }, ...history, { role: "user", content: text }];
   const out = await env.AI.run(env.MODEL || DEFAULT_MODEL, { messages, max_tokens: 1200 });
   return outputText(out).trim() || "Mình chưa nghĩ ra câu trả lời, bạn thử hỏi lại giúp mình nhé.";

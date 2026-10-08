@@ -1,6 +1,7 @@
 name = "zalo-agent-nhan"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
 
 # Keep variables set in the dashboard (ALLOWED_IDS) when deploying from Git
 keep_vars = true
@@ -15,6 +16,11 @@ binding = "AI"
 binding = "DB"
 database_name = "zalo-agent-db"
 database_id = "47865ada-7560-4212-8da6-3e77accd92d4"
+
+# Generated files (Word/Excel/pictures)
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "zalo-agent-files"
 
 # Check due reminders every minute
 [triggers]
