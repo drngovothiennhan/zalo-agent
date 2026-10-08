@@ -2,6 +2,7 @@
 import { Buffer } from "node:buffer";
 import { complete } from "./brain.js";
 import { nowDescription } from "./time.js";
+import { buildDocx, para, textParas, htmlParas, layoutTable } from "./docx.js";
 
 const randomId = () => [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -76,51 +77,60 @@ function parseFields(raw) {
   return out;
 }
 
-const esc = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const lines = (s) => esc(s).replace(/\\n|\n/g, "<br>");
-
 // Administrative document layout (thể thức văn bản hành chính, Nghị định 30/2020/NĐ-CP)
 function adminBody(f) {
-  const noTable = 'style="border:none;width:100%;border-collapse:collapse"';
-  const cell = (w, extra = "") => `style="border:none;width:${w};text-align:center;vertical-align:top;padding:0 4pt;${extra}"`;
+  const W = 9355; // text width in twips (A4, margins 3cm left, 1.5cm right)
   const noiNhan = String(f.NOI_NHAN || "")
     .split(/;|\n/)
     .map((s) => s.replace(/^[-–•\s]+/, "").trim())
     .filter(Boolean);
-  const header = `<table ${noTable}><tr>
-<td ${cell("40%")}>${f.CO_QUAN_CHU_QUAN ? `<span style="font-size:13pt">${lines(f.CO_QUAN_CHU_QUAN)}</span><br>` : ""}<b style="font-size:13pt">${lines(f.CO_QUAN_BAN_HANH || "…")}</b><br>———<br><span style="font-size:13pt">${esc(f.SO_KY_HIEU || "Số: …")}</span></td>
-<td ${cell("60%")}><b style="font-size:12pt">CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</b><br><b style="font-size:13pt">Độc lập - Tự do - Hạnh phúc</b><br>———————<br><i style="font-size:13pt">${esc(f.DIA_DANH_NGAY || "…, ngày … tháng … năm …")}</i></td>
-</tr></table>`;
+  const header = layoutTable([
+    {
+      width: 4000,
+      xml:
+        (f.CO_QUAN_CHU_QUAN ? textParas(f.CO_QUAN_CHU_QUAN, { align: "center", size: 13, after: 0 }) : "") +
+        textParas(f.CO_QUAN_BAN_HANH || "…", { align: "center", size: 13, b: true, after: 0 }) +
+        para("———", { align: "center", size: 13, after: 0 }) +
+        para(f.SO_KY_HIEU || "Số: …", { align: "center", size: 13 }),
+    },
+    {
+      width: W - 4000,
+      xml:
+        para("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", { align: "center", size: 12, b: true, after: 0 }) +
+        para("Độc lập - Tự do - Hạnh phúc", { align: "center", size: 13, b: true, after: 0 }) +
+        para("———————", { align: "center", size: 13, after: 0 }) +
+        para(f.DIA_DANH_NGAY || "…, ngày … tháng … năm …", { align: "center", size: 13, i: true }),
+    },
+  ]);
   const title =
-    (f.LOAI_VAN_BAN ? `<p style="text-align:center;margin:18pt 0 0"><b style="font-size:14pt">${esc(f.LOAI_VAN_BAN.toUpperCase())}</b></p>` : "") +
+    (f.LOAI_VAN_BAN ? para(f.LOAI_VAN_BAN.toUpperCase(), { align: "center", size: 14, b: true, after: 0 }) : "") +
     (f.TRICH_YEU
-      ? `<p style="text-align:center;margin:${f.LOAI_VAN_BAN ? "0" : "12pt 0 0"}"><b style="font-size:14pt">${esc(f.TRICH_YEU)}</b></p><p style="text-align:center;margin:0">———</p>`
+      ? textParas(f.TRICH_YEU, { align: "center", size: 14, b: true, after: 0 }) + para("———", { align: "center", after: 200 })
       : "");
-  const body = `<div class="nd" style="text-align:justify">${String(f.NOI_DUNG || "").replace(/<\/?(html|head|body|script|style)[^>]*>/gi, "")}</div>`;
-  const footer = `<table ${noTable} style="margin-top:12pt"><tr>
-<td style="border:none;width:50%;vertical-align:top;font-size:12pt">${noiNhan.length ? `<b><i>Nơi nhận:</i></b><br>${noiNhan.map((x) => `- ${esc(x)};`).join("<br>")}` : ""}</td>
-<td ${cell("50%")}><b style="font-size:14pt">${lines(f.CHUC_VU_KY || "…")}</b><br><i>(Ký, ghi rõ họ tên${/biên bản/i.test(f.LOAI_VAN_BAN || "") ? "" : ", đóng dấu"})</i><br><br><br><br><b>${esc(f.NGUOI_KY || "")}</b></td>
-</tr></table>`;
-  return header + title + body + footer;
+  const body = htmlParas(f.NOI_DUNG || "", { firstLine: 567 });
+  const signer = /biên bản/i.test(f.LOAI_VAN_BAN || "") ? "" : ", đóng dấu";
+  const footer = layoutTable([
+    {
+      width: 4500,
+      xml: noiNhan.length
+        ? para([{ text: "Nơi nhận:", b: true, i: true }], { size: 12, after: 0 }) +
+          noiNhan.map((x) => para(`- ${x};`, { size: 12, after: 0 })).join("")
+        : "",
+    },
+    {
+      width: W - 4500,
+      xml:
+        textParas(f.CHUC_VU_KY || "…", { align: "center", size: 14, b: true, after: 0 }) +
+        para([{ text: `(Ký, ghi rõ họ tên${signer})`, i: true }], { align: "center", size: 12, after: 600 }) +
+        para(f.NGUOI_KY || "", { align: "center", size: 14, b: true }),
+    },
+  ]);
+  return header + para("", { after: 120 }) + title + body + para("", { after: 120 }) + footer;
 }
 
 const EXCEL_SYSTEM = `Bạn tạo bảng tính tiếng Việt. Thời điểm hiện tại: {now}.
 Trả về DUY NHẤT nội dung CSV (dấu phẩy ngăn cách, mỗi dòng một hàng, ô có dấu phẩy thì đặt trong ngoặc kép), không giải thích, không Markdown.
 Dòng đầu là tiêu đề cột. Nếu là sổ theo dõi/biểu mẫu, tạo sẵn các hàng mẫu hoặc hàng trống có số thứ tự để điền.`;
-
-function wordHtml(title, inner) {
-  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="utf-8"><title>${title.replace(/</g, "")}</title>
-<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
-<style>
-@page{size:21cm 29.7cm;margin:2cm 1.5cm 2cm 3cm}
-body{font-family:"Times New Roman",serif;font-size:14pt;line-height:1.3}
-p{margin:0 0 6pt}
-.nd p{text-indent:1cm}
-h1{font-size:16pt;text-align:center;text-transform:uppercase}h2{font-size:14pt}h3{font-size:14pt}
-table{border-collapse:collapse;width:100%}th,td{border:1px solid #000;padding:4pt 6pt;vertical-align:top}th{background:#eee}
-</style></head><body>${inner}</body></html>`;
-}
 
 // templates: knowledge-base snippets (e.g. uploaded "Mẫu …" documents) to follow
 export async function makeFile(env, origin, kind, request, templates = []) {
@@ -137,14 +147,14 @@ export async function makeFile(env, origin, kind, request, templates = []) {
       inner = adminBody(f);
       title = [f.LOAI_VAN_BAN, f.TRICH_YEU].filter(Boolean).join(" ") || "Văn bản";
     } else {
-      const body = (f.NOI_DUNG !== undefined ? f.NOI_DUNG : raw).replace(/<\/?(html|head|body|script|style)[^>]*>/gi, "");
-      title = f.TRICH_YEU || f.LOAI_VAN_BAN || (/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(body)?.[1] || "").replace(/<[^>]+>/g, "").trim() || request.slice(0, 60);
-      inner = (/<h1/i.test(body) ? "" : `<h1>${esc(title)}</h1>`) + body;
+      const html = f.NOI_DUNG !== undefined ? f.NOI_DUNG : raw;
+      title = f.TRICH_YEU || f.LOAI_VAN_BAN || (/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] || "").replace(/<[^>]+>/g, "").trim() || request.slice(0, 60);
+      inner = para(title, { align: "center", size: 16, b: true, after: 240 }) + htmlParas(html);
     }
     const link = await storeFile(env, origin, {
-      body: "﻿" + wordHtml(title, inner),
-      type: "application/msword",
-      filename: `${slug(title)}.doc`,
+      body: buildDocx(inner, { title }),
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      filename: `${slug(title)}.docx`,
     });
     return { title, link, usedTemplates: [...new Set(templates.map((t) => t.doc_name))] };
   }
