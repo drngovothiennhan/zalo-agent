@@ -84,10 +84,29 @@ async function viaWorkersAI(env, system, question, img) {
   return String(out?.response || out?.description || "").trim();
 }
 
-export async function describeImage(env, { url, caption }) {
+async function askImage(env, url, system, question) {
   const img = await fetchImage(url);
+  return env.GEMINI_API_KEY ? viaGemini(env, system, question, img) : viaWorkersAI(env, system, question, img);
+}
+
+export async function describeImage(env, { url, caption }) {
   const system = VISION_PROMPT.replace("{now}", nowDescription());
   const question = caption?.trim() || "Bạn xem giúp ảnh này có gì, và nếu có chữ thì đọc giúp nội dung chính.";
-  const answer = env.GEMINI_API_KEY ? await viaGemini(env, system, question, img) : await viaWorkersAI(env, system, question, img);
+  const answer = await askImage(env, url, system, question);
   return answer || "Mình chưa đọc được ảnh này. Bạn thử chụp lại rõ hơn, đủ sáng và thẳng góc nhé.";
+}
+
+const TRANSCRIBE_PROMPT = `Bạn là công cụ chép văn bản từ ảnh chụp giấy tờ tiếng Việt.
+Chép lại NGUYÊN VĂN toàn bộ chữ trong ảnh, đúng thứ tự từ trên xuống, xuống dòng theo bố cục của văn bản.
+- Phần đầu văn bản có hai cột (tên cơ quan bên trái, quốc hiệu bên phải): chép cột trái trước rồi đến cột phải.
+- Chỗ trống, dòng chấm để điền: ghi "…".
+- Bảng: mỗi hàng một dòng, các ô ngăn cách bằng " | ".
+- Không thêm lời bình, không sửa chính tả, không tóm tắt.
+- Chữ nào không đọc được thì ghi [không rõ].
+Nếu ảnh không có chữ, chỉ trả về: KHÔNG CÓ CHỮ`;
+
+// Verbatim text of a photographed document page ("" if the photo has no text)
+export async function transcribeImage(env, url) {
+  const text = String((await askImage(env, url, TRANSCRIBE_PROMPT, "Chép lại toàn bộ chữ trong ảnh này.")) || "").trim();
+  return /^KHÔNG CÓ CHỮ\.?$/i.test(text) ? "" : text;
 }

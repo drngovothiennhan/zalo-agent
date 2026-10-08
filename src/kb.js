@@ -21,32 +21,88 @@ export function ftsQuery(text) {
   return terms.map((t) => `"${t}"`).join(" OR ");
 }
 
-export async function searchKb(env, text, limit = 4) {
+// kind: null = all documents, "mau" = templates only, "doc" = ordinary documents only
+export async function searchKb(env, text, limit = 4, kind = null) {
   const q = ftsQuery(text);
   if (!q) return [];
   try {
-    const { results } = await env.DB.prepare(
-      "SELECT content, doc_name, bm25(kb_fts) AS score FROM kb_fts WHERE kb_fts MATCH ? ORDER BY score LIMIT ?"
-    )
-      .bind(q, limit)
-      .all();
+    const sql = kind
+      ? "SELECT kb_fts.content AS content, kb_fts.doc_name AS doc_name, bm25(kb_fts) AS score FROM kb_fts JOIN kb_docs d ON d.id = CAST(kb_fts.doc_id AS INTEGER) WHERE kb_fts MATCH ? AND d.kind = ? ORDER BY score LIMIT ?"
+      : "SELECT content, doc_name, bm25(kb_fts) AS score FROM kb_fts WHERE kb_fts MATCH ? ORDER BY score LIMIT ?";
+    const stmt = kind ? env.DB.prepare(sql).bind(q, kind, limit) : env.DB.prepare(sql).bind(q, limit);
+    const { results } = await stmt.all();
     return results;
   } catch {
     return [];
   }
 }
 
-export async function listDocs(env) {
-  const { results } = await env.DB.prepare("SELECT id, name, chunks, created_at FROM kb_docs ORDER BY id DESC").all();
+export async function listDocs(env, kind = null) {
+  const { results } = kind
+    ? await env.DB.prepare("SELECT id, name, chunks, created_at, kind FROM kb_docs WHERE kind = ? ORDER BY id DESC").bind(kind).all()
+    : await env.DB.prepare("SELECT id, name, chunks, created_at, kind FROM kb_docs ORDER BY id DESC").all();
   return results;
 }
 
-async function createDoc(env, name) {
-  const r = await env.DB.prepare("INSERT INTO kb_docs (name, chunks, created_at) VALUES (?, 0, ?)").bind(name, Date.now()).run();
+export async function getDoc(env, docId) {
+  return env.DB.prepare("SELECT id, name, chunks, kind FROM kb_docs WHERE id = ?").bind(Number(docId)).first();
+}
+
+// Full text of a document (chunks in insertion order)
+export async function docText(env, docId) {
+  const { results } = await env.DB.prepare("SELECT content FROM kb_fts WHERE doc_id = ? ORDER BY rowid").bind(String(docId)).all();
+  return results.map((r) => r.content).join("\n\n");
+}
+
+export async function setKind(env, docId, kind) {
+  const r = await env.DB.prepare("UPDATE kb_docs SET kind = ? WHERE id = ?").bind(kind, Number(docId)).run();
+  return r.meta.changes > 0;
+}
+
+export async function createDoc(env, name, kind = "doc") {
+  const r = await env.DB.prepare("INSERT INTO kb_docs (name, chunks, created_at, kind) VALUES (?, 0, ?, ?)")
+    .bind(name, Date.now(), kind === "mau" ? "mau" : "doc")
+    .run();
   return r.meta.last_row_id;
 }
 
-async function addChunks(env, docId, chunks) {
+// Split plain text into ~1200-character chunks on paragraph boundaries
+export function chunkText(text) {
+  const paras = String(text || "")
+    .replace(/\r/g, "")
+    .split(/\n\s*\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out = [];
+  let cur = "";
+  for (const p of paras) {
+    if (p.length > 1400) {
+      if (cur) out.push(cur), (cur = "");
+      for (let i = 0; i < p.length; i += 1200) out.push(p.slice(Math.max(0, i - 150), i + 1200));
+      continue;
+    }
+    if (cur && (cur + "\n\n" + p).length > 1200) out.push(cur), (cur = p);
+    else cur = cur ? cur + "\n\n" + p : p;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+// Convert an uploaded file (PDF, Word, Excel, HTML…) to text with Workers AI
+export async function fileToText(env, name, buf, type) {
+  const [res] = await env.AI.toMarkdown([{ name, blob: new Blob([buf], { type: type || "application/octet-stream" }) }]);
+  if (!res || res.format === "error" || !res.data) throw new Error(res?.error || "định dạng chưa hỗ trợ");
+  return res.data;
+}
+
+export async function addText(env, docId, text) {
+  const chunks = chunkText(text);
+  let added = 0;
+  for (let i = 0; i < chunks.length; i += 50) added += await addChunks(env, docId, chunks.slice(i, i + 50));
+  return added;
+}
+
+export async function addChunks(env, docId, chunks) {
   const doc = await env.DB.prepare("SELECT name FROM kb_docs WHERE id = ?").bind(Number(docId)).first();
   if (!doc) throw new Error("không tìm thấy tài liệu");
   const stmts = chunks
@@ -59,7 +115,7 @@ async function addChunks(env, docId, chunks) {
   return stmts.length - 1;
 }
 
-async function deleteDoc(env, docId) {
+export async function deleteDoc(env, docId) {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM kb_fts WHERE doc_id = ?").bind(String(docId)),
     env.DB.prepare("DELETE FROM kb_docs WHERE id = ?").bind(Number(docId)),
@@ -97,7 +153,7 @@ export async function handleKb(request, env, url) {
     if (!docId) {
       const name = String(body.name || "").trim().slice(0, 200);
       if (!name) return json({ error: "Thiếu tên tài liệu" }, 400);
-      docId = await createDoc(env, name);
+      docId = await createDoc(env, name, body.kind);
     }
     const chunks = Array.isArray(body.chunks) ? body.chunks.slice(0, 100) : [];
     const added = chunks.length ? await addChunks(env, docId, chunks) : 0;
@@ -135,10 +191,12 @@ li:first-child{border-top:0}.meta{color:var(--muted);font-size:14px}
 <section><h2>Tải file lên</h2>
 <p class="meta">Hỗ trợ PDF, Word (.docx), Excel, HTML, ảnh có chữ. PDF dạng ảnh chụp có thể không đọc được chữ.</p>
 <input type="file" id="file" accept=".pdf,.docx,.xlsx,.xls,.csv,.html,.htm,.txt,.md,.odt,.ods,.jpg,.jpeg,.png,.webp">
-<br><button id="upload">Tải lên và nạp vào bot</button></section>
+<label style="font-weight:400"><input type="checkbox" id="fmau"> Đây là <b>tài liệu mẫu</b> (bot sẽ bám theo khi soạn văn bản)</label>
+<button id="upload">Tải lên và nạp vào bot</button></section>
 <section><h2>Hoặc dán nội dung</h2>
 <label for="pname">Tên tài liệu</label><input type="text" id="pname" placeholder="Ví dụ: Thông tin sức khỏe cả nhà">
 <label for="ptext">Nội dung</label><textarea id="ptext" placeholder="Dán văn bản vào đây"></textarea>
+<label style="font-weight:400"><input type="checkbox" id="pmau"> Đây là <b>tài liệu mẫu</b></label>
 <button id="paste">Nạp vào bot</button></section>
 <div id="status"></div>
 <section><h2>Tài liệu đã nạp</h2><ul id="docs"><li class="meta">Đang tải…</li></ul></section>
@@ -162,12 +220,12 @@ function chunkText(text) {
   if (cur) out.push(cur);
   return out;
 }
-async function ingest(name, text) {
+async function ingest(name, text, mau) {
   const chunks = chunkText(text);
   if (!chunks.length) throw new Error("Không có nội dung chữ để nạp.");
   let docId = null, done = 0;
   for (let i = 0; i < chunks.length; i += 50) {
-    const r = await fetch(q("/kb/add"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ doc_id: docId, name, chunks: chunks.slice(i, i + 50) }) });
+    const r = await fetch(q("/kb/add"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ doc_id: docId, name, kind: mau ? "mau" : "doc", chunks: chunks.slice(i, i + 50) }) });
     const d = await r.json(); if (!r.ok) throw new Error(d.error || "Lỗi khi nạp");
     docId = d.doc_id; done += d.added; say("Đang nạp… " + done + "/" + chunks.length + " đoạn");
   }
@@ -180,7 +238,7 @@ async function loadDocs() {
     const li = document.createElement("li");
     const left = document.createElement("div");
     left.innerHTML = "<div></div><div class='meta'></div>";
-    left.children[0].textContent = d.name;
+    left.children[0].textContent = (d.kind === "mau" ? "📄 Mẫu · " : "") + d.name;
     left.children[1].textContent = d.chunks + " đoạn · " + new Date(d.created_at).toLocaleDateString("vi-VN");
     const b = document.createElement("button"); b.className = "del"; b.textContent = "Xóa";
     b.onclick = async () => { if (!confirm("Xóa tài liệu \\"" + d.name + "\\"?")) return;
@@ -195,14 +253,14 @@ document.getElementById("upload").onclick = async (e) => {
     const fd = new FormData(); fd.append("file", f);
     const r = await fetch(q("/kb/convert"), { method: "POST", body: fd }); const d = await r.json();
     if (!r.ok) throw new Error(d.error || "Không đọc được file");
-    const n = await ingest(f.name, d.markdown); say("Đã nạp \\"" + f.name + "\\" (" + n + " đoạn). Bot đã có thể tra cứu.", "ok"); loadDocs();
+    const n = await ingest(f.name, d.markdown, document.getElementById("fmau").checked); say("Đã nạp \\"" + f.name + "\\" (" + n + " đoạn). Bot đã có thể tra cứu.", "ok"); loadDocs();
   } catch (err) { say(err.message, "err"); } finally { e.target.disabled = false; }
 };
 document.getElementById("paste").onclick = async (e) => {
   const name = document.getElementById("pname").value.trim(), text = document.getElementById("ptext").value.trim();
   if (!name || !text) return say("Cần nhập cả tên và nội dung.", "err");
   e.target.disabled = true;
-  try { const n = await ingest(name, text); say("Đã nạp \\"" + name + "\\" (" + n + " đoạn).", "ok"); document.getElementById("ptext").value = ""; loadDocs(); }
+  try { const n = await ingest(name, text, document.getElementById("pmau").checked); say("Đã nạp \\"" + name + "\\" (" + n + " đoạn).", "ok"); document.getElementById("ptext").value = ""; loadDocs(); }
   catch (err) { say(err.message, "err"); } finally { e.target.disabled = false; }
 };
 loadDocs();

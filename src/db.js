@@ -83,3 +83,51 @@ export async function rescheduleReminder(env, id, dueAt) {
 export async function removeReminder(env, id) {
   await env.DB.prepare("DELETE FROM reminders WHERE id = ?").bind(Number(id)).run();
 }
+
+// ----- Template/document intake state -----
+const SESSION_MS = 20 * 60 * 1000;
+
+export async function startSession(env, chatId, docId, kind) {
+  await env.DB.prepare("INSERT OR REPLACE INTO sessions (chat_id, doc_id, kind, expires_at) VALUES (?, ?, ?, ?)")
+    .bind(String(chatId), Number(docId), kind, Date.now() + SESSION_MS)
+    .run();
+}
+
+export async function getSession(env, chatId) {
+  const s = await env.DB.prepare("SELECT doc_id, kind, expires_at FROM sessions WHERE chat_id = ?").bind(String(chatId)).first();
+  if (!s || s.expires_at < Date.now()) return null;
+  return s;
+}
+
+export async function touchSession(env, chatId) {
+  await env.DB.prepare("UPDATE sessions SET expires_at = ? WHERE chat_id = ?").bind(Date.now() + SESSION_MS, String(chatId)).run();
+}
+
+export async function endSession(env, chatId) {
+  await env.DB.prepare("DELETE FROM sessions WHERE chat_id = ?").bind(String(chatId)).run();
+}
+
+export async function setLastMedia(env, chatId, { url, mediaType, name, docId }) {
+  await env.DB.prepare("INSERT OR REPLACE INTO last_media (chat_id, url, media_type, name, doc_id, at) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(String(chatId), url || null, mediaType || null, name || null, docId ?? null, Date.now())
+    .run();
+}
+
+// Most recent photo/file/document from this chat, if within 30 minutes
+export async function getLastMedia(env, chatId) {
+  const m = await env.DB.prepare("SELECT url, media_type, name, doc_id, at FROM last_media WHERE chat_id = ?").bind(String(chatId)).first();
+  if (!m || Date.now() - m.at > 30 * 60 * 1000) return null;
+  return m;
+}
+
+// Raw copy of events the bot does not understand yet (for diagnosis), keeps the last 50
+export async function logEvent(env, kind, body) {
+  try {
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO event_log (kind, body, created_at) VALUES (?, ?, ?)").bind(kind, String(body).slice(0, 4000), Date.now()),
+      env.DB.prepare("DELETE FROM event_log WHERE id NOT IN (SELECT id FROM event_log ORDER BY id DESC LIMIT 50)"),
+    ]);
+  } catch {
+    /* diagnostics only */
+  }
+}
