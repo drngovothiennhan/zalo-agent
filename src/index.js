@@ -31,6 +31,15 @@ const HELP = `Mình là trợ lý của gia đình. Bạn có thể:
 - Bắt đầu cuộc trò chuyện mới: "/reset"`;
 
 // Lowercase, strip Vietnamese diacritics, collapse spaces — for command matching only
+// Reject if the work takes longer than ms, so the handler always reaches its reply path
+function withTimeout(promise, ms, label) {
+  let timer;
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(label)), ms);
+  });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
+
 function norm(s) {
   return String(s || "")
     .normalize("NFD")
@@ -171,12 +180,16 @@ async function handleCommand(env, ctx) {
       return true;
     }
     await sendText(env, chatId, `Đang soạn file ${kind === "word" ? "Word" : "Excel"}, bạn chờ khoảng 20–40 giây nhé…`);
+    const started = Date.now();
+    trace("file.start", { kind, chars: request.length });
     try {
       // Prefer saved templates ("mẫu"), otherwise any related document
       let templates = kind === "word" ? await findTemplate(env, request) : [];
       if (kind === "word" && !templates.length) templates = await searchKb(env, request, 3, "mau");
       if (kind === "word" && !templates.length) templates = await searchKb(env, request, 2);
-      const f = await makeFile(env, origin, kind, request, templates);
+      // Hard limit so the user always gets a reply (the platform may kill a stalled request silently)
+      const f = await withTimeout(makeFile(env, origin, kind, request, templates), 90_000, "soạn file quá lâu");
+      trace("file.done", { kind, ms: Date.now() - started, templates: templates.length });
       await sendText(
         env,
         chatId,
@@ -188,8 +201,8 @@ async function handleCommand(env, ctx) {
       );
       await db.saveTurn(env, chatId, text, `[Đã tạo file ${kind}: ${f.title}]`);
     } catch (e) {
-      trace("file.error", { message: String(e && e.message) });
-      await sendText(env, chatId, "Mình chưa tạo được file, bạn thử lại sau ít phút nhé.");
+      trace("file.error", { kind, ms: Date.now() - started, message: String(e && e.message) });
+      await sendText(env, chatId, `Mình chưa tạo được file (${String(e && e.message).slice(0, 80)}). Bạn thử lại với yêu cầu ngắn hơn hoặc sau ít phút nhé.`);
     }
     return true;
   }

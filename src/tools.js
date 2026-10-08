@@ -129,7 +129,7 @@ export async function makeFile(env, origin, kind, request, templates = []) {
     const ref = templates.length
       ? `\n\nMẫu/tài liệu tham khảo tìm được trong kho tài liệu (dùng nếu liên quan):\n${templates.map((t) => `--- "${t.doc_name}" ---\n${t.content}`).join("\n\n")}`
       : "";
-    const raw = stripFences(await complete(env, WORD_SYSTEM.replace("{now}", now), request + ref, { max_tokens: 3500 }));
+    const raw = stripFences(await complete(env, WORD_SYSTEM.replace("{now}", now), request + ref, { max_tokens: 2000 }));
     const f = parseFields(raw);
     let inner;
     let title;
