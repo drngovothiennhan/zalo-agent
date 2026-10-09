@@ -1,7 +1,8 @@
-// LLM calls (Workers AI)
+// LLM calls (Workers AI, falling back to Gemini — see llm.js)
 import { nowDescription } from "./time.js";
+import { runText, DEFAULT_MODEL } from "./llm.js";
 
-export const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+export { DEFAULT_MODEL };
 const NOTES_BUDGET = 6000; // max characters of family notes injected into the prompt
 
 const BASE_PROMPT = `Bạn là trợ lý chung của gia đình anh Ngô Võ Thiện Nhân (Ths, nhân viên y tế trường mầm non, sinh viên Y khoa ngành YHCT). Bạn trò chuyện qua Zalo.
@@ -12,14 +13,6 @@ Thông tin y khoa chỉ mang tính tham khảo, không thay thế chẩn đoán 
 Nếu không chắc, nói rõ là không chắc; không bịa số liệu hay nguồn.
 Câu hỏi pháp luật (an toàn thực phẩm, giao thông, y tế trường học, lao động…): chỉ nêu số hiệu văn bản, số điều khoản, mức phạt, mức trừ điểm khi chúng có trong "Tài liệu tham khảo" bên dưới, và ghi nguồn. Nếu tài liệu không có, chỉ giải thích nguyên tắc chung, nói rõ quy định có thể đã thay đổi, khuyên tra văn bản hiện hành trên vbpl.vn hoặc hỏi cơ quan chức năng; tuyệt đối không tự đoán mức phạt hay số điều.
 Bot có sẵn các lệnh: "ghi nhớ: ..." để lưu ghi chú gia đình, "xem ghi chú", "nhắc tôi ... lúc ..." để đặt lịch nhắc, "xem lịch nhắc", "thời tiết <nơi>", "vẽ <mô tả>", "tạo file word: <yêu cầu>", "tạo file excel: <yêu cầu>", gửi ảnh để bot đọc, "hướng dẫn". Nếu người dùng muốn lưu thông tin, đặt nhắc, xem thời tiết, vẽ tranh hay tạo file, hãy hướng dẫn họ dùng đúng các lệnh này thay vì tự hứa sẽ làm.`;
-
-function outputText(out) {
-  if (!out) return "";
-  if (typeof out.response === "string") return out.response;
-  if (out.response && typeof out.response === "object") return JSON.stringify(out.response);
-  if (out.choices?.[0]?.message?.content) return out.choices[0].message.content;
-  return "";
-}
 
 function notesBlock(notes) {
   if (!notes?.length) return "";
@@ -42,16 +35,11 @@ function kbBlock(snippets) {
 
 // Single-shot completion helper
 export async function complete(env, system, user, { max_tokens = 600, temperature } = {}) {
-  const params = {
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    max_tokens,
-  };
-  if (temperature !== undefined) params.temperature = temperature;
-  const out = await env.AI.run(env.MODEL || DEFAULT_MODEL, params);
-  return outputText(out).trim();
+  const messages = [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+  return (await runText(env, messages, { max_tokens, temperature })).trim();
 }
 
 export async function chat(env, { history, text, who, notes, kb }) {
@@ -62,8 +50,8 @@ export async function chat(env, { history, text, who, notes, kb }) {
     notesBlock(notes) +
     kbBlock(kb);
   const messages = [{ role: "system", content: system }, ...history, { role: "user", content: text }];
-  const out = await env.AI.run(env.MODEL || DEFAULT_MODEL, { messages, max_tokens: 1200 });
-  return outputText(out).trim() || "Mình chưa nghĩ ra câu trả lời, bạn thử hỏi lại giúp mình nhé.";
+  const out = await runText(env, messages, { max_tokens: 1200 });
+  return out.trim() || "Mình chưa nghĩ ra câu trả lời, bạn thử hỏi lại giúp mình nhé.";
 }
 
 // Turn a natural-language reminder request into structured data.
@@ -77,15 +65,14 @@ Quy tắc:
 - "sáng" mặc định 07:00, "trưa" 11:30, "chiều" 16:00, "tối" 20:00 nếu không nói giờ cụ thể. "7h tối" là 19:00.
 - "mỗi ngày/hằng ngày" là daily; "mỗi tuần/thứ X hằng tuần" là weekly; còn lại none.
 - Nếu đây không phải yêu cầu đặt lịch nhắc, trả về {"is_reminder": false}.`;
-  const out = await env.AI.run(env.MODEL || DEFAULT_MODEL, {
-    messages: [
+  const raw = await runText(
+    env,
+    [
       { role: "system", content: system },
       { role: "user", content: text },
     ],
-    max_tokens: 200,
-    temperature: 0,
-  });
-  const raw = outputText(out);
+    { max_tokens: 200, temperature: 0 }
+  );
   const m = raw.match(/\{[\s\S]*\}/);
   if (!m) return null;
   let data;
