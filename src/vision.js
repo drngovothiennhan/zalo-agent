@@ -86,7 +86,15 @@ async function viaWorkersAI(env, system, question, img) {
 
 async function askImage(env, url, system, question) {
   const img = await fetchImage(url);
-  return env.GEMINI_API_KEY ? viaGemini(env, system, question, img) : viaWorkersAI(env, system, question, img);
+  if (env.GEMINI_API_KEY) {
+    try {
+      return await viaGemini(env, system, question, img);
+    } catch (e) {
+      // Gemini quota/key/model problem: fall back to Workers AI instead of failing the photo
+      trace("vision.gemini.error", { message: String(e && e.message).slice(0, 300) });
+    }
+  }
+  return viaWorkersAI(env, system, question, img);
 }
 
 export async function describeImage(env, { url, caption }) {
