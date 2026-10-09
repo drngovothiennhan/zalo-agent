@@ -9,6 +9,7 @@ import { solarToLunar, lunarAnniversary, jdFromDate, yearName } from "./lunar.js
 import { weather, storeFile } from "./tools.js";
 import { fetchHeadlines } from "./live.js";
 import { botById, botEnv } from "./bots.js";
+import { dayInfo, dayShort } from "./fortune.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 const OFFSET = 7 * 60 * 60 * 1000;
@@ -206,6 +207,11 @@ export async function briefText(env, chatId, botId = "main", now = Date.now()) {
   const l = solarToLunar(t.d, t.mo, t.y);
   const parts = [`☀️ Chào buổi sáng cả nhà! ${wd}, ${pad(t.d)}/${pad(t.mo)}/${t.y} — ngày ${l.day}/${l.month}${l.leap ? " (nhuận)" : ""} âm lịch, năm ${yearName(l.year)}.`];
   if (l.day === 1 || l.day === 15) parts.push(`🙏 Hôm nay là ${l.day === 1 ? "mùng 1" : "rằm"} âm lịch.`);
+  try {
+    parts.push(`🔮 ${dayShort(dayInfo(t.d, t.mo, t.y))}`);
+  } catch {
+    /* optional */
+  }
 
   try {
     const w = (await weather(env, "")).split("\n");

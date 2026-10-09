@@ -16,6 +16,7 @@ import { BOTS, botById, botByPath, botEnv } from "./bots.js";
 import { isWeatherQuestion, weatherPlace, needsLive, liveAnswer } from "./live.js";
 import { alarmLink, handleAlarm } from "./alarm.js";
 import { handleHousehold, runBriefs, runSpecialDayAlerts } from "./household.js";
+import { handleFortune } from "./fortune.js";
 import SEED_MAU_UBND from "../seed/mau-ubnd-2026-10.json" with { type: "json" };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -40,6 +41,7 @@ const HELP = `Mình là trợ lý của gia đình. Bạn có thể:
 - Thu chi: "chi 50k rau" · "thu 10tr lương" · "chi tiêu tháng này" · "xuất chi tiêu" · "xóa chi 5"
 - Ngày giỗ, sinh nhật: "giỗ ông nội 15/7" (âm lịch) · "sinh nhật bé An 20/11/2019" · "ngày đặc biệt" · "âm lịch"
 - Bản tin sáng: "bật bản tin sáng 6h" · "bản tin" · "tắt bản tin sáng"
+- Xem ngày, tuổi, gieo quẻ (tham khảo cho vui): "xem ngày mai" · "giờ hoàng đạo" · "ngày tốt tháng 11 tuổi 1990" · "xem tuổi 1990" · "hợp tuổi 1990 1993" · "gieo quẻ: có nên đổi việc không"
 - Xem AI nào đang chạy: "trạng thái AI"
 - Bắt đầu cuộc trò chuyện mới: "/reset"`;
 
@@ -101,6 +103,8 @@ async function handleCommand(env, ctx) {
 
   // Shopping list, spending book, special days, morning brief
   if (await handleHousehold(env, ctx)) return true;
+  // Folk almanac: good days, auspicious hours, I Ching, age reading
+  if (await handleFortune(env, ctx, (msg) => sendText(env, chatId, msg))) return true;
 
   if (n === "/reset" || n === "xoa ngu canh") {
     await db.clearHistory(env, chatId);
