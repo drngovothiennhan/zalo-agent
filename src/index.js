@@ -5,6 +5,7 @@
 import { DEBUG, trace, zalo, sendText, typing } from "./zalo.js";
 import * as db from "./db.js";
 import { chat, extractReminder } from "./brain.js";
+import { wakeMatch, isListening, worthAnswering, handleChitchat, handleListenToggle } from "./chitchat.js";
 import { parseLocal, formatLocal } from "./time.js";
 import { describeImage } from "./vision.js";
 import { searchKb, findTemplate, listDocs, handleKb, createDoc, addText, getDoc, docText, setKind, deleteDoc } from "./kb.js";
@@ -42,6 +43,8 @@ const HELP = `Mình là trợ lý của gia đình. Bạn có thể:
 - Ngày giỗ, sinh nhật: "giỗ ông nội 15/7" (âm lịch) · "sinh nhật bé An 20/11/2019" · "ngày đặc biệt" · "âm lịch"
 - Bản tin sáng: "bật bản tin sáng 6h" · "bản tin" · "tắt bản tin sáng"
 - Xem ngày, tuổi, gieo quẻ (tham khảo cho vui): "xem ngày mai" · "giờ hoàng đạo" · "ngày tốt tháng 11 tuổi 1990" · "xem tuổi 1990" · "hợp tuổi 1990 1993" · "gieo quẻ: có nên đổi việc không"
+- Tán gẫu, xin lời khuyên: "kể chuyện cười", "đố vui", "xin lời khuyên: con không chịu ăn", "mình buồn quá, tâm sự chút", "động viên mình đi"
+- Gọi bot không cần tag: bắt đầu bằng "bot ơi…" hoặc gọi tên bot (nhóm "Bin Bơ ơi…", "Tâm Phúc ơi…"). Trong nhóm, gõ "bật chế độ trò chuyện" để bot tự chen vào khi có câu hỏi (tắt: "tắt chế độ trò chuyện")
 - Xem AI nào đang chạy: "trạng thái AI"
 - Bắt đầu cuộc trò chuyện mới: "/reset"`;
 
@@ -496,17 +499,17 @@ async function handleUpdate(env, update, origin) {
   }
   const who = msg.from?.display_name || msg.from?.name || "";
   const botName = env.BOT_NAME || "Bot Dr Tâm Phúc";
+  // Called by: @mention, /command, "bot ...", or by the bot's own name / "trợ lý" (no tag needed)
   const addressed = (s) => {
     const t = String(s || "");
-    return t.includes("@") || t.startsWith("/") || norm(t).startsWith("bot");
+    return t.includes("@") || t.startsWith("/") || norm(t).startsWith("bot") || wakeMatch(t, botName) !== null;
   };
-  const clean = (s) =>
-    String(s || "")
-      .split(`@${botName}`)
-      .join(" ")
-      .replace(/^bot[\s,:]*/i, "")
-      .replace(/\s+/g, " ")
-      .trim();
+  const clean = (s) => {
+    let t = String(s || "").split(`@${botName}`).join(" ").replace(/^bot[\s,:]*/i, "");
+    const w = wakeMatch(t, botName);
+    if (w !== null && !t.includes("@")) t = w;
+    return t.replace(/\s+/g, " ").trim();
+  };
   const ctx = { chatId, userId, who, origin };
 
   // Images
@@ -522,13 +525,31 @@ async function handleUpdate(env, update, origin) {
   }
 
   let text = msg.text.trim();
+  let chatty = false; // group listening mode: answered without being called
   if (isGroup) {
-    // In a group, only answer when addressed: @mention, a /command, or starting with "bot"
-    if (!addressed(text)) return trace("skip", { reason: "group message not addressed to bot" });
-    text = clean(text) || text;
+    // In a group: answer when addressed (@, /command, "bot", or the bot's name), or when listening mode is on and it's a question
+    if (!addressed(text)) {
+      if (!(await isListening(env, env.BOT_ID, chatId)) || !worthAnswering(text)) return trace("skip", { reason: "group message not addressed to bot" });
+      chatty = true;
+    } else {
+      text = clean(text) || text;
+    }
   }
 
-  if (await handleCommand(env, { ...ctx, text })) return;
+  if (!chatty && (await handleListenToggle(env, { chatId, text, bot: env.BOT_ID, isGroup }, (m) => sendText(env, chatId, m)))) return;
+  if (!chatty && (await handleCommand(env, { ...ctx, text }))) return;
+
+  // Chit-chat, jokes, riddles, advice, heart-to-heart
+  {
+    const history0 = await db.loadHistory(env, chatId);
+    let handled = false;
+    try {
+      handled = await handleChitchat(env, { text, who }, async (m) => { await typing(env, chatId); const o = await sendText(env, chatId, m); await db.saveTurn(env, chatId, text, m); return o; }, history0);
+    } catch (e) {
+      trace("ai.error", { where: "chitchat", message: String(e && e.message) });
+    }
+    if (handled) return;
+  }
 
   await typing(env, chatId);
 
