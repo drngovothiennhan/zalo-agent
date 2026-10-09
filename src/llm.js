@@ -1,34 +1,37 @@
-// Text generation with automatic fallback:
-// Workers AI (Llama) first; if it fails (daily free quota used up, model error, empty answer)
-// the same request goes to Gemini (GEMINI_API_KEY). Logged to event_log as "ai.fallback".
+// Text generation across several AI providers with automatic fallback.
+// A provider is used only when its key is set (Workers AI needs none). When one fails
+// (free quota used up, rate limit, model error, empty answer) the next one gets the same request.
+//
+//   tier "main"   (chat, Word/Excel):        Workers AI -> Gemini -> Groq -> Cerebras -> OpenRouter
+//   tier "simple" (reminders, short prompts): Groq -> Cerebras -> Workers AI -> Gemini -> OpenRouter
+//
+// Secrets (Cloudflare > Worker > Settings > Variables and Secrets):
+//   GEMINI_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY, OPENROUTER_API_KEY
+// Optional model overrides: MODEL, GEMINI_TEXT_MODEL, GROQ_MODEL, GROQ_SIMPLE_MODEL, CEREBRAS_MODEL, OPENROUTER_MODEL
 import { trace } from "./zalo.js";
 import { logEvent } from "./db.js";
 
 export const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-const DEFAULT_GEMINI_TEXT_MODEL = "gemini-flash-latest";
-const COOLDOWN_MS = 15 * 60 * 1000; // after a quota error, skip Workers AI for a while
+const COOLDOWN_MS = 15 * 60 * 1000; // after a quota/rate-limit error, skip that provider for a while
+const skipUntil = {};
 
-let workersSkipUntil = 0;
+const isQuotaError = (msg) => /4006|neurons|daily free allocation|quota|rate.?limit|too many requests|\b429\b|exhausted/i.test(msg);
 
-function outputText(out) {
+// ---------- Workers AI ----------
+function workersText(out) {
   if (!out) return "";
   if (typeof out.response === "string") return out.response;
   if (out.response && typeof out.response === "object") return JSON.stringify(out.response);
-  if (out.choices?.[0]?.message?.content) return out.choices[0].message.content;
-  return "";
+  return out.choices?.[0]?.message?.content || "";
 }
-
-const isQuotaError = (msg) => /4006|neurons|daily free allocation|quota|limit|429/i.test(msg);
 
 async function viaWorkers(env, messages, { max_tokens, temperature }) {
   const params = { messages, max_tokens };
   if (temperature !== undefined) params.temperature = temperature;
-  const out = await env.AI.run(env.MODEL || DEFAULT_MODEL, params);
-  const text = outputText(out).trim();
-  if (!text) throw new Error("Workers AI trả về rỗng");
-  return text;
+  return workersText(await env.AI.run(env.MODEL || DEFAULT_MODEL, params));
 }
 
+// ---------- Gemini ----------
 async function geminiRequest(env, model, body) {
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
@@ -47,40 +50,116 @@ async function viaGemini(env, messages, { max_tokens, temperature }) {
   if (temperature !== undefined) generationConfig.temperature = temperature;
   const body = { systemInstruction: { parts: [{ text: system }] }, contents, generationConfig };
 
-  let model = env.GEMINI_TEXT_MODEL || env.GEMINI_MODEL || DEFAULT_GEMINI_TEXT_MODEL;
+  let model = env.GEMINI_TEXT_MODEL || env.GEMINI_MODEL || "gemini-flash-latest";
   let r = await geminiRequest(env, model, body);
+  // Retired model: Google names the replacement in the error ("use models/<name>"), retry once with it
   const suggested = !r.ok && /use models\/([\w.-]+)/.exec(JSON.stringify(r.data))?.[1];
   if (suggested && suggested !== model) {
     model = suggested;
     r = await geminiRequest(env, model, body);
   }
-  if (!r.ok) throw new Error(`Gemini ${r.status} (${model}): ${JSON.stringify(r.data).slice(0, 200)}`);
-  const text = (r.data.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("").trim();
-  if (!text) throw new Error("Gemini trả về rỗng");
-  return text;
+  if (!r.ok) throw new Error(`${r.status} (${model}): ${JSON.stringify(r.data).slice(0, 200)}`);
+  return (r.data.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
+}
+
+// ---------- OpenAI-compatible APIs (Groq, Cerebras, OpenRouter) ----------
+async function viaOpenAICompatible(env, { base, key, model, extraHeaders = {} }, messages, { max_tokens, temperature }) {
+  const reasoning = /gpt-oss/.test(model);
+  const body = { model, messages, max_tokens: reasoning ? max_tokens + 1024 : max_tokens };
+  if (temperature !== undefined) body.temperature = temperature;
+  if (reasoning) body.reasoning_effort = "low";
+  const res = await fetch(`${base}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, ...extraHeaders },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`${res.status} (${model}): ${JSON.stringify(data).slice(0, 200)}`);
+  return data.choices?.[0]?.message?.content || "";
+}
+
+const PROVIDERS = {
+  workers: { label: "Cloudflare Workers AI", enabled: () => true, run: viaWorkers },
+  gemini: { label: "Gemini", enabled: (env) => !!env.GEMINI_API_KEY, run: viaGemini },
+  groq: {
+    label: "Groq",
+    enabled: (env) => !!env.GROQ_API_KEY,
+    run: (env, messages, opts) =>
+      viaOpenAICompatible(
+        env,
+        {
+          base: "https://api.groq.com/openai/v1",
+          key: env.GROQ_API_KEY,
+          model: opts.tier === "simple" ? env.GROQ_SIMPLE_MODEL || "openai/gpt-oss-20b" : env.GROQ_MODEL || "llama-3.3-70b-versatile",
+        },
+        messages,
+        opts
+      ),
+  },
+  cerebras: {
+    label: "Cerebras",
+    enabled: (env) => !!env.CEREBRAS_API_KEY,
+    run: (env, messages, opts) =>
+      viaOpenAICompatible(env, { base: "https://api.cerebras.ai/v1", key: env.CEREBRAS_API_KEY, model: env.CEREBRAS_MODEL || "gpt-oss-120b" }, messages, opts),
+  },
+  openrouter: {
+    label: "OpenRouter",
+    enabled: (env) => !!env.OPENROUTER_API_KEY,
+    run: (env, messages, opts) =>
+      viaOpenAICompatible(
+        env,
+        {
+          base: "https://openrouter.ai/api/v1",
+          key: env.OPENROUTER_API_KEY,
+          model: env.OPENROUTER_MODEL || "openrouter/free",
+          extraHeaders: { "X-Title": "Zalo family bot" },
+        },
+        messages,
+        opts
+      ),
+  },
+};
+
+const ORDER = {
+  main: ["workers", "gemini", "groq", "cerebras", "openrouter"],
+  simple: ["groq", "cerebras", "workers", "gemini", "openrouter"],
+};
+
+// Which providers are switched on (for the "trạng thái AI" command)
+export function aiStatus(env) {
+  const now = Date.now();
+  return ORDER.main.map((id) => {
+    const p = PROVIDERS[id];
+    const state = !p.enabled(env) ? "chưa có khóa" : (skipUntil[id] || 0) > now ? "tạm nghỉ (vừa hết hạn mức)" : "sẵn sàng";
+    return `- ${p.label}: ${state}`;
+  });
 }
 
 // messages: [{role: system|user|assistant, content}]
-export async function runText(env, messages, { max_tokens = 600, temperature } = {}) {
-  const opts = { max_tokens, temperature };
-  let workersError = null;
-  if (Date.now() >= workersSkipUntil) {
-    try {
-      return await viaWorkers(env, messages, opts);
-    } catch (e) {
-      workersError = String((e && e.message) || e);
-      if (isQuotaError(workersError)) workersSkipUntil = Date.now() + COOLDOWN_MS;
+export async function runText(env, messages, { max_tokens = 600, temperature, tier = "main" } = {}) {
+  const opts = { max_tokens, temperature, tier };
+  const failures = [];
+  for (const id of ORDER[tier] || ORDER.main) {
+    const p = PROVIDERS[id];
+    if (!p.enabled(env)) continue;
+    if ((skipUntil[id] || 0) > Date.now()) {
+      failures.push(`${p.label}: tạm nghỉ`);
+      continue;
     }
-  } else {
-    workersError = "đang tạm bỏ qua Workers AI sau lỗi hạn mức";
+    try {
+      const text = String((await p.run(env, messages, opts)) || "").trim();
+      if (!text) throw new Error("trả về rỗng");
+      if (failures.length) {
+        trace("ai.fallback", { used: p.label, failed: failures });
+        await logEvent(env, "ai.fallback", `${failures.join(" | ").slice(0, 600)} -> ${p.label}`);
+      }
+      return text;
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      if (isQuotaError(msg)) skipUntil[id] = Date.now() + COOLDOWN_MS;
+      failures.push(`${p.label}: ${msg.slice(0, 150)}`);
+    }
   }
-  if (!env.GEMINI_API_KEY) throw new Error(workersError);
-  trace("ai.fallback", { to: "gemini", reason: workersError.slice(0, 200) });
-  await logEvent(env, "ai.fallback", `Workers AI: ${workersError.slice(0, 300)} -> Gemini`);
-  try {
-    return await viaGemini(env, messages, opts);
-  } catch (e) {
-    await logEvent(env, "ai.error", `Workers AI: ${workersError.slice(0, 200)} | Gemini: ${String(e && e.message).slice(0, 300)}`);
-    throw new Error(`cả Workers AI và Gemini đều lỗi (${String(e && e.message).slice(0, 80)})`);
-  }
+  await logEvent(env, "ai.error", failures.join(" | ").slice(0, 1000));
+  throw new Error(`tất cả AI đều lỗi (${failures.map((f) => f.split(":")[0]).join(", ")})`);
 }

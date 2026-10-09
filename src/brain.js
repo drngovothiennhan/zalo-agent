@@ -34,12 +34,12 @@ function kbBlock(snippets) {
 }
 
 // Single-shot completion helper
-export async function complete(env, system, user, { max_tokens = 600, temperature } = {}) {
+export async function complete(env, system, user, { max_tokens = 600, temperature, tier } = {}) {
   const messages = [
     { role: "system", content: system },
     { role: "user", content: user },
   ];
-  return (await runText(env, messages, { max_tokens, temperature })).trim();
+  return (await runText(env, messages, { max_tokens, temperature, tier })).trim();
 }
 
 export async function chat(env, { history, text, who, notes, kb }) {
@@ -71,7 +71,7 @@ Quy tắc:
       { role: "system", content: system },
       { role: "user", content: text },
     ],
-    { max_tokens: 200, temperature: 0 }
+    { max_tokens: 200, temperature: 0, tier: "simple" }
   );
   const m = raw.match(/\{[\s\S]*\}/);
   if (!m) return null;

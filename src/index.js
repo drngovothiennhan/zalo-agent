@@ -10,6 +10,7 @@ import { searchKb, findTemplate, listDocs, handleKb, createDoc, addText, getDoc,
 import { makeFile, serveFile, weather, draw } from "./tools.js";
 import { isTemplate, wantsSave, cleanName, findFile, ingestImage, ingestFile, markLast, DOC_TYPES } from "./intake.js";
 import { runSeed } from "./seed.js";
+import { aiStatus } from "./llm.js";
 import SEED_MAU_UBND from "../seed/mau-ubnd-2026-10.json" with { type: "json" };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -28,6 +29,7 @@ const HELP = `Mình là trợ lý của gia đình. Bạn có thể:
   · Nhiều trang: "nạp mẫu: Quyết định thành lập đoàn" → gửi lần lượt ảnh từng trang → "xong"
   · Dán chữ: "lưu mẫu: <tên>" xuống dòng rồi dán nội dung
   · "danh sách mẫu" · "xem mẫu 3" · "xóa mẫu 3" · "tài liệu" (xem tất cả, link trang tải file)
+- Xem AI nào đang chạy: "trạng thái AI"
 - Bắt đầu cuộc trò chuyện mới: "/reset"`;
 
 // Lowercase, strip Vietnamese diacritics, collapse spaces — for command matching only
@@ -78,6 +80,11 @@ async function handleCommand(env, ctx) {
 
   if (["/help", "/start", "huong dan", "tro giup", "help", "menu"].includes(n)) {
     await sendText(env, chatId, HELP);
+    return true;
+  }
+
+  if (["/ai", "trang thai ai", "ai nao dang chay"].includes(n)) {
+    await sendText(env, chatId, `Các AI của bot (dùng lần lượt, cái trước hết hạn mức thì chuyển sang cái sau):\n${aiStatus(env).join("\n")}`);
     return true;
   }
 

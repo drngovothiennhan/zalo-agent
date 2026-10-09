@@ -220,7 +220,7 @@ export async function draw(env, origin, request) {
     env,
     "Translate the user's Vietnamese image request into one concise, vivid English prompt for an image generator. Family-friendly. Output only the prompt.",
     request,
-    { max_tokens: 120, temperature: 0.3 }
+    { max_tokens: 120, temperature: 0.3, tier: "simple" }
   );
   const out = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", { prompt: en || request, steps: 6 });
   if (!out?.image) throw new Error("không tạo được ảnh");
