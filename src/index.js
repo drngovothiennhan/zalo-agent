@@ -548,12 +548,14 @@ export default {
     if (url.pathname.startsWith("/f/") && request.method === "GET") return serveFile(env, url);
     if (url.pathname === "/kb" || url.pathname.startsWith("/kb/")) return handleKb(request, env, url);
 
-    // One-time helper: GET /setup?key=<WEBHOOK_SECRET>[&bot=binbo] registers this host as that bot's Zalo webhook.
+    // One-time helper: GET /setup?key=<secret>[&bot=binbo] registers this host as that bot's Zalo webhook.
+    // key = the owner's WEBHOOK_SECRET, or that bot's own webhook secret.
     if (request.method === "GET" && url.pathname === "/setup") {
-      if (url.searchParams.get("key") !== env.WEBHOOK_SECRET) return new Response("forbidden", { status: 403 });
       const bot = botById(url.searchParams.get("bot"));
-      const benv = botEnv(env, bot);
       const secret = env[bot.secretVar];
+      const key = url.searchParams.get("key");
+      if (!key || (key !== env.WEBHOOK_SECRET && key !== secret)) return new Response("forbidden", { status: 403 });
+      const benv = botEnv(env, bot);
       if (!benv.BOT_TOKEN || !secret) return Response.json({ ok: false, bot: bot.id, missing: [!benv.BOT_TOKEN && bot.tokenVar, !secret && bot.secretVar].filter(Boolean) });
       const data = await zalo(benv, "setWebhook", { url: `${url.origin}${bot.path}`, secret_token: secret });
       return Response.json({ bot: bot.id, name: bot.name, webhook: `${url.origin}${bot.path}`, result: data });
