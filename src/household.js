@@ -10,6 +10,8 @@ import { weather, storeFile } from "./tools.js";
 import { fetchHeadlines } from "./live.js";
 import { botById, botEnv } from "./bots.js";
 import { dayInfo, dayShort } from "./fortune.js";
+import { complete } from "./brain.js";
+import { DAILY_TIP_PROMPT, formatDailyTip } from "./tip.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 const OFFSET = 7 * 60 * 60 * 1000;
@@ -257,6 +259,14 @@ export async function briefText(env, chatId, botId = "main", now = Date.now()) {
     if (news.length) parts.push(`📰 Tin chính (VnExpress):\n${news.map((n) => `- ${n.title}`).join("\n")}`);
   } catch {
     /* optional */
+  }
+
+  // AI "gợi ý hôm nay", grounded only in the facts gathered above; optional, so failures are ignored
+  try {
+    const tip = formatDailyTip(await complete(env, DAILY_TIP_PROMPT, parts.join("\n\n"), { max_tokens: 250, temperature: 0.3 }));
+    if (tip) parts.push(tip);
+  } catch {
+    /* no AI available: the brief still goes out without the tip */
   }
 
   parts.push('Chúc cả nhà một ngày vui khỏe! (Tắt: "tắt bản tin sáng")');
