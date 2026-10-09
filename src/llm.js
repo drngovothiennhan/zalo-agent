@@ -2,8 +2,9 @@
 // A provider is used only when its key is set (Workers AI needs none). When one fails
 // (free quota used up, rate limit, model error, empty answer) the next one gets the same request.
 //
-//   tier "main"   (chat, Word/Excel):        Claude Haiku 5.5 -> Workers AI -> Gemini Flash -> Gemini Flash-Lite -> Groq -> Cerebras -> OpenRouter
+//   tier "main"   (chat):                    Workers AI -> Gemini Flash -> Gemini Flash-Lite -> Groq -> Cerebras -> OpenRouter
 //   tier "simple" (reminders, short prompts): Groq -> Cerebras -> Gemini Flash-Lite -> Workers AI -> Gemini Flash -> OpenRouter
+//   tier "smart"  (Word/Excel, structured work): Claude Haiku 5.5 -> then the free chain above
 //   Claude is paid per token (no free quota) and only runs when ANTHROPIC_API_KEY is set.
 //
 // Secrets (Cloudflare > Worker > Settings > Variables and Secrets):
@@ -143,14 +144,15 @@ const PROVIDERS = {
 };
 
 const ORDER = {
-  main: ["claude", "workers", "gemini", "geminiLite", "groq", "cerebras", "openrouter"],
+  main: ["workers", "gemini", "geminiLite", "groq", "cerebras", "openrouter"],
   simple: ["groq", "cerebras", "geminiLite", "workers", "gemini", "openrouter"],
+  smart: ["claude", "workers", "gemini", "geminiLite", "groq", "cerebras", "openrouter"],
 };
 
 // Which providers are switched on (for the "trạng thái AI" command)
 export function aiStatus(env) {
   const now = Date.now();
-  return ORDER.main.map((id) => {
+  return [...new Set([...ORDER.smart, ...ORDER.main])].map((id) => {
     const p = PROVIDERS[id];
     const state = !p.enabled(env) ? "chưa có khóa" : (skipUntil[id] || 0) > now ? "tạm nghỉ (vừa hết hạn mức)" : "sẵn sàng";
     return `- ${p.label}: ${state}`;
