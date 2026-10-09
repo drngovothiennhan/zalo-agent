@@ -15,6 +15,7 @@ import { aiStatus } from "./llm.js";
 import { BOTS, botById, botByPath, botEnv } from "./bots.js";
 import { isWeatherQuestion, weatherPlace, needsLive, liveAnswer } from "./live.js";
 import { alarmLink, handleAlarm } from "./alarm.js";
+import { handleHousehold, runBriefs, runSpecialDayAlerts } from "./household.js";
 import SEED_MAU_UBND from "../seed/mau-ubnd-2026-10.json" with { type: "json" };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -35,6 +36,10 @@ const HELP = `Mình là trợ lý của gia đình. Bạn có thể:
   · Nhiều trang: "nạp mẫu: Quyết định thành lập đoàn" → gửi lần lượt ảnh từng trang → "xong"
   · Dán chữ: "lưu mẫu: <tên>" xuống dòng rồi dán nội dung
   · "danh sách mẫu" · "xem mẫu 3" · "xóa mẫu 3" · "tài liệu" (xem tất cả, link trang tải file)
+- Đi chợ: "mua: trứng, sữa, rau" · "đi chợ" · "đã mua trứng" / "đã mua hết"
+- Thu chi: "chi 50k rau" · "thu 10tr lương" · "chi tiêu tháng này" · "xuất chi tiêu" · "xóa chi 5"
+- Ngày giỗ, sinh nhật: "giỗ ông nội 15/7" (âm lịch) · "sinh nhật bé An 20/11/2019" · "ngày đặc biệt" · "âm lịch"
+- Bản tin sáng: "bật bản tin sáng 6h" · "bản tin" · "tắt bản tin sáng"
 - Xem AI nào đang chạy: "trạng thái AI"
 - Bắt đầu cuộc trò chuyện mới: "/reset"`;
 
@@ -93,6 +98,9 @@ async function handleCommand(env, ctx) {
     await sendText(env, chatId, `Các AI của bot (dùng lần lượt, cái trước hết hạn mức thì chuyển sang cái sau):\n${aiStatus(env).join("\n")}`);
     return true;
   }
+
+  // Shopping list, spending book, special days, morning brief
+  if (await handleHousehold(env, ctx)) return true;
 
   if (n === "/reset" || n === "xoa ngu canh") {
     await db.clearHistory(env, chatId);
@@ -671,6 +679,8 @@ export default {
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runReminders(env).catch((e) => trace("cron.error", { message: String(e && e.stack) })));
+    ctx.waitUntil(runBriefs(env).catch((e) => trace("brief.error", { message: String(e && e.stack) })));
+    ctx.waitUntil(runSpecialDayAlerts(env).catch((e) => trace("specialdays.error", { message: String(e && e.stack) })));
     ctx.waitUntil(runSeed(env, SEED_MAU_UBND).catch((e) => trace("seed.error", { message: String(e && e.stack) })));
   },
 };

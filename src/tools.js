@@ -26,7 +26,7 @@ function stripFences(s) {
     .trim();
 }
 
-async function storeFile(env, origin, { body, type, filename }) {
+export async function storeFile(env, origin, { body, type, filename }) {
   const id = randomId();
   await env.FILES.put(`f/${id}`, body, {
     httpMetadata: { contentType: type, contentDisposition: `attachment; filename="${filename}"` },
