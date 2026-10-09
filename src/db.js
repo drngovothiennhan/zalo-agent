@@ -46,9 +46,9 @@ export async function deleteNote(env, id) {
 
 export async function addReminder(env, { chatId, text, dueAt, repeat, author }) {
   const r = await env.DB.prepare(
-    "INSERT INTO reminders (chat_id, text, due_at, repeat, author, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO reminders (chat_id, text, due_at, repeat, author, created_at, bot) VALUES (?, ?, ?, ?, ?, ?, ?)"
   )
-    .bind(String(chatId), text, dueAt, repeat || "none", author || "", Date.now())
+    .bind(String(chatId), text, dueAt, repeat || "none", author || "", Date.now(), env.BOT_ID || "main")
     .run();
   return r.meta.last_row_id;
 }
@@ -69,7 +69,7 @@ export async function deleteReminder(env, chatId, id) {
 
 export async function dueReminders(env, now) {
   const { results } = await env.DB.prepare(
-    "SELECT id, chat_id, text, due_at, repeat FROM reminders WHERE due_at <= ? ORDER BY due_at LIMIT 50"
+    "SELECT id, chat_id, text, due_at, repeat, bot FROM reminders WHERE due_at <= ? ORDER BY due_at LIMIT 50"
   )
     .bind(now)
     .all();

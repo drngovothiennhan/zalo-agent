@@ -45,6 +45,8 @@ export async function complete(env, system, user, { max_tokens = 600, temperatur
 export async function chat(env, { history, text, who, notes, kb }) {
   const system =
     BASE_PROMPT +
+    `\n\nTên của bạn trên Zalo: ${env.BOT_NAME || "Bot Dr Tâm Phúc"}.` +
+    (env.BOT_PERSONA ? `\n${env.BOT_PERSONA}` : "") +
     `\n\nThời điểm hiện tại: ${nowDescription()}.` +
     (who ? `\nNgười đang nhắn tin: ${who}.` : "") +
     notesBlock(notes) +

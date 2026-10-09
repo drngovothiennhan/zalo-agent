@@ -1,6 +1,7 @@
 // Zalo family assistant — Cloudflare Worker
 // Bindings: AI (Workers AI), DB (D1), FILES (R2)
 // Secrets: BOT_TOKEN, WEBHOOK_SECRET, GEMINI_API_KEY (optional)   Vars: ALLOWED_IDS, MODEL, WEATHER_CITY, BOT_NAME (optional)
+// More bots on the same Worker: see bots.js (e.g. BOT_TOKEN_BINBO, WEBHOOK_SECRET_BINBO, ALLOWED_IDS_BINBO)
 import { DEBUG, trace, zalo, sendText, typing } from "./zalo.js";
 import * as db from "./db.js";
 import { chat, extractReminder } from "./brain.js";
@@ -11,6 +12,7 @@ import { makeFile, serveFile, weather, draw } from "./tools.js";
 import { isTemplate, wantsSave, cleanName, findFile, ingestImage, ingestFile, markLast, DOC_TYPES } from "./intake.js";
 import { runSeed } from "./seed.js";
 import { aiStatus } from "./llm.js";
+import { BOTS, botById, botByPath, botEnv } from "./bots.js";
 import SEED_MAU_UBND from "../seed/mau-ubnd-2026-10.json" with { type: "json" };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -521,7 +523,12 @@ async function runReminders(env) {
   const now = Date.now();
   const due = await db.dueReminders(env, now);
   for (const r of due) {
-    await sendText(env, r.chat_id, `⏰ Nhắc việc: ${r.text}`);
+    const benv = botEnv(env, botById(r.bot));
+    if (!benv.BOT_TOKEN) {
+      await db.removeReminder(env, r.id); // that bot is no longer configured
+      continue;
+    }
+    await sendText(benv, r.chat_id, `⏰ Nhắc việc: ${r.text}`);
     if (r.repeat === "daily" || r.repeat === "weekly") {
       const step = r.repeat === "daily" ? DAY : 7 * DAY;
       let next = r.due_at;
@@ -541,17 +548,23 @@ export default {
     if (url.pathname.startsWith("/f/") && request.method === "GET") return serveFile(env, url);
     if (url.pathname === "/kb" || url.pathname.startsWith("/kb/")) return handleKb(request, env, url);
 
-    // One-time helper: GET /setup?key=<WEBHOOK_SECRET> registers this host as the Zalo webhook.
+    // One-time helper: GET /setup?key=<WEBHOOK_SECRET>[&bot=binbo] registers this host as that bot's Zalo webhook.
     if (request.method === "GET" && url.pathname === "/setup") {
       if (url.searchParams.get("key") !== env.WEBHOOK_SECRET) return new Response("forbidden", { status: 403 });
-      const data = await zalo(env, "setWebhook", { url: `${url.origin}/webhook`, secret_token: env.WEBHOOK_SECRET });
-      return Response.json(data);
+      const bot = botById(url.searchParams.get("bot"));
+      const benv = botEnv(env, bot);
+      const secret = env[bot.secretVar];
+      if (!benv.BOT_TOKEN || !secret) return Response.json({ ok: false, bot: bot.id, missing: [!benv.BOT_TOKEN && bot.tokenVar, !secret && bot.secretVar].filter(Boolean) });
+      const data = await zalo(benv, "setWebhook", { url: `${url.origin}${bot.path}`, secret_token: secret });
+      return Response.json({ bot: bot.id, name: bot.name, webhook: `${url.origin}${bot.path}`, result: data });
     }
 
     // Diagnostics: GET /debug?key=<WEBHOOK_SECRET>
     if (request.method === "GET" && url.pathname === "/debug") {
       if (url.searchParams.get("key") !== env.WEBHOOK_SECRET) return new Response("forbidden", { status: 403 });
-      const [me, hook] = await Promise.all([zalo(env, "getMe"), zalo(env, "getWebhookInfo")]);
+      const dbot = botById(url.searchParams.get("bot"));
+      const denv = botEnv(env, dbot);
+      const [me, hook] = await Promise.all([zalo(denv, "getMe"), zalo(denv, "getWebhookInfo")]);
       let counts = null;
       try {
         counts = await env.DB.prepare(
@@ -561,14 +574,16 @@ export default {
         counts = { error: String(e && e.message) };
       }
       return Response.json({
+        bot: dbot.id,
+        bots: Object.values(BOTS).map((b) => ({ id: b.id, name: b.name, webhook: b.path, has_token: !!env[b.tokenVar], has_secret: !!env[b.secretVar] })),
         config: {
-          has_BOT_TOKEN: !!env.BOT_TOKEN,
+          has_BOT_TOKEN: !!denv.BOT_TOKEN,
           has_WEBHOOK_SECRET: !!env.WEBHOOK_SECRET,
           has_AI: !!env.AI,
           has_DB: !!env.DB,
           has_FILES: !!env.FILES,
           vision: env.GEMINI_API_KEY ? "gemini" : "workers-ai",
-          ALLOWED_IDS: env.ALLOWED_IDS || env.OWNER_ID || "(trống)",
+          ALLOWED_IDS: denv.ALLOWED_IDS || "(trống)",
         },
         db: counts,
         getMe: me,
@@ -577,12 +592,14 @@ export default {
       });
     }
 
-    if (request.method === "POST" && url.pathname === "/webhook") {
+    const hookBot = request.method === "POST" ? botByPath(url.pathname) : null;
+    if (hookBot) {
+      const secret = env[hookBot.secretVar];
       const got = request.headers.get("X-Bot-Api-Secret-Token");
       const raw = await request.text();
-      trace("webhook.in", { secret_ok: got === env.WEBHOOK_SECRET, body: raw.slice(0, 1500) });
+      trace("webhook.in", { bot: hookBot.id, secret_ok: !!secret && got === secret, body: raw.slice(0, 1500) });
       // Requests without the right secret get a plain "ok" (for Zalo's probe) but are never processed.
-      if (got !== env.WEBHOOK_SECRET) return new Response("ok");
+      if (!secret || got !== secret) return new Response("ok");
       let body;
       try {
         body = JSON.parse(raw);
@@ -590,7 +607,7 @@ export default {
         return new Response("ok");
       }
       const update = body.result || body;
-      ctx.waitUntil(handleUpdate(env, update, url.origin).catch((e) => trace("handle.error", { message: String(e && e.stack) })));
+      ctx.waitUntil(handleUpdate(botEnv(env, hookBot), update, url.origin).catch((e) => trace("handle.error", { message: String(e && e.stack) })));
       return new Response("ok");
     }
 
