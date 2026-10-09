@@ -13,6 +13,7 @@ import { isTemplate, wantsSave, cleanName, findFile, ingestImage, ingestFile, ma
 import { runSeed } from "./seed.js";
 import { aiStatus } from "./llm.js";
 import { BOTS, botById, botByPath, botEnv } from "./bots.js";
+import { isWeatherQuestion, weatherPlace, needsLive, liveAnswer } from "./live.js";
 import SEED_MAU_UBND from "../seed/mau-ubnd-2026-10.json" with { type: "json" };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -23,7 +24,8 @@ const HELP = `Mình là trợ lý của gia đình. Bạn có thể:
 - Gửi ảnh (kèm câu hỏi nếu muốn): đọc giấy tờ, đơn thuốc, bài tập của con, món ăn…
 - Lưu thông tin chung: "ghi nhớ: bé An dị ứng tôm" · "xem ghi chú" · "xóa ghi chú 3"
 - Nhắc việc: "nhắc tôi 7h sáng mai lấy mẫu thức ăn", "nhắc tôi 21h mỗi ngày uống thuốc" · "xem lịch nhắc" · "hủy nhắc 2"
-- Thời tiết: "thời tiết", "thời tiết Đà Lạt"
+- Thời tiết: "thời tiết", "thời tiết Đà Lạt", hoặc hỏi tự nhiên "mai Đà Lạt có mưa không"
+- Tin mới, giá cả: "tin tức hôm nay", "giá vàng hôm nay", "tỷ giá đô la", "giá xăng" (bot tra cứu trên mạng)
 - Tạo file: "tạo file word: biên bản kiểm tra bếp ăn tháng 10" · "tạo file excel: sổ theo dõi cân nặng 30 trẻ"
 - Vẽ tranh: "vẽ chú mèo đội mũ phi hành gia"
 - Nạp tài liệu/mẫu ngay trong chat:
@@ -507,6 +509,36 @@ async function handleUpdate(env, update, origin) {
   if (await handleCommand(env, { ...ctx, text })) return;
 
   await typing(env, chatId);
+
+  // Weather asked in plain words ("Đà Lạt mai có mưa không")
+  if (isWeatherQuestion(text)) {
+    let w;
+    try {
+      w = await weather(env, await weatherPlace(env, text));
+    } catch (e) {
+      trace("weather.error", { message: String(e && e.message) });
+      w = "Mình chưa lấy được thông tin thời tiết, bạn thử lại sau nhé.";
+    }
+    await sendText(env, chatId, w);
+    await db.saveTurn(env, chatId, text, w);
+    return;
+  }
+
+  // News, prices, economy: look it up instead of answering from the AI's memory
+  if (needsLive(text)) {
+    let live;
+    try {
+      live = await liveAnswer(env, text);
+    } catch (e) {
+      trace("live.error", { message: String(e && e.message) });
+      await db.logEvent(env, "live.error", String(e && e.message));
+      live = "Mình chưa tra được tin mới lúc này, bạn thử lại sau ít phút nhé.";
+    }
+    await sendText(env, chatId, live);
+    await db.saveTurn(env, chatId, text, live);
+    return;
+  }
+
   let reply;
   const [history, notes, kb] = await Promise.all([db.loadHistory(env, chatId), db.listNotes(env), searchKb(env, text)]);
   try {
