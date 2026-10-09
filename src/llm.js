@@ -2,12 +2,12 @@
 // A provider is used only when its key is set (Workers AI needs none). When one fails
 // (free quota used up, rate limit, model error, empty answer) the next one gets the same request.
 //
-//   tier "main"   (chat, Word/Excel):        Workers AI -> Gemini -> Groq -> Cerebras -> OpenRouter
-//   tier "simple" (reminders, short prompts): Groq -> Cerebras -> Workers AI -> Gemini -> OpenRouter
+//   tier "main"   (chat, Word/Excel):        Workers AI -> Gemini Flash -> Gemini Flash-Lite -> Groq -> Cerebras -> OpenRouter
+//   tier "simple" (reminders, short prompts): Groq -> Cerebras -> Gemini Flash-Lite -> Workers AI -> Gemini Flash -> OpenRouter
 //
 // Secrets (Cloudflare > Worker > Settings > Variables and Secrets):
 //   GEMINI_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY, OPENROUTER_API_KEY
-// Optional model overrides: MODEL, GEMINI_TEXT_MODEL, GROQ_MODEL, GROQ_SIMPLE_MODEL, CEREBRAS_MODEL, OPENROUTER_MODEL
+// Optional model overrides: MODEL, GEMINI_TEXT_MODEL, GEMINI_LITE_MODEL, GROQ_MODEL, GROQ_SIMPLE_MODEL, CEREBRAS_MODEL, OPENROUTER_MODEL
 import { trace } from "./zalo.js";
 import { logEvent } from "./db.js";
 
@@ -41,7 +41,7 @@ async function geminiRequest(env, model, body) {
   return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
 }
 
-async function viaGemini(env, messages, { max_tokens, temperature }) {
+async function viaGemini(env, messages, { max_tokens, temperature }, defaultModel = "gemini-flash-latest", override = env.GEMINI_TEXT_MODEL || env.GEMINI_MODEL) {
   const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
   const contents = messages
     .filter((m) => m.role !== "system" && m.content)
@@ -50,7 +50,7 @@ async function viaGemini(env, messages, { max_tokens, temperature }) {
   if (temperature !== undefined) generationConfig.temperature = temperature;
   const body = { systemInstruction: { parts: [{ text: system }] }, contents, generationConfig };
 
-  let model = env.GEMINI_TEXT_MODEL || env.GEMINI_MODEL || "gemini-flash-latest";
+  let model = override || defaultModel;
   let r = await geminiRequest(env, model, body);
   // Retired model: Google names the replacement in the error ("use models/<name>"), retry once with it
   const suggested = !r.ok && /use models\/([\w.-]+)/.exec(JSON.stringify(r.data))?.[1];
@@ -80,7 +80,13 @@ async function viaOpenAICompatible(env, { base, key, model, extraHeaders = {} },
 
 const PROVIDERS = {
   workers: { label: "Cloudflare Workers AI", enabled: () => true, run: viaWorkers },
-  gemini: { label: "Gemini", enabled: (env) => !!env.GEMINI_API_KEY, run: viaGemini },
+  gemini: { label: "Gemini Flash", enabled: (env) => !!env.GEMINI_API_KEY, run: (env, messages, opts) => viaGemini(env, messages, opts) },
+  // Same Google key, separate free quota per model
+  geminiLite: {
+    label: "Gemini Flash-Lite",
+    enabled: (env) => !!env.GEMINI_API_KEY,
+    run: (env, messages, opts) => viaGemini(env, messages, opts, "gemini-flash-lite-latest", env.GEMINI_LITE_MODEL),
+  },
   groq: {
     label: "Groq",
     enabled: (env) => !!env.GROQ_API_KEY,
@@ -121,8 +127,8 @@ const PROVIDERS = {
 };
 
 const ORDER = {
-  main: ["workers", "gemini", "groq", "cerebras", "openrouter"],
-  simple: ["groq", "cerebras", "workers", "gemini", "openrouter"],
+  main: ["workers", "gemini", "geminiLite", "groq", "cerebras", "openrouter"],
+  simple: ["groq", "cerebras", "geminiLite", "workers", "gemini", "openrouter"],
 };
 
 // Which providers are switched on (for the "trạng thái AI" command)
