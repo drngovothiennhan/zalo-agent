@@ -2,20 +2,23 @@
 // A provider is used only when its key is set (Workers AI needs none). When one fails
 // (free quota used up, rate limit, model error, empty answer) the next one gets the same request.
 //
-//   tier "main"   (chat, Word/Excel):        Workers AI -> Gemini Flash -> Gemini Flash-Lite -> Groq -> Cerebras -> OpenRouter
+//   tier "main"   (chat, Word/Excel):        Claude Haiku 5.5 -> Workers AI -> Gemini Flash -> Gemini Flash-Lite -> Groq -> Cerebras -> OpenRouter
 //   tier "simple" (reminders, short prompts): Groq -> Cerebras -> Gemini Flash-Lite -> Workers AI -> Gemini Flash -> OpenRouter
+//   Claude is paid per token (no free quota) and only runs when ANTHROPIC_API_KEY is set.
 //
 // Secrets (Cloudflare > Worker > Settings > Variables and Secrets):
-//   GEMINI_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY, OPENROUTER_API_KEY
-// Optional model overrides: MODEL, GEMINI_TEXT_MODEL, GEMINI_LITE_MODEL, GROQ_MODEL, GROQ_SIMPLE_MODEL, CEREBRAS_MODEL, OPENROUTER_MODEL
+//   ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY, OPENROUTER_API_KEY
+// Optional model overrides: ANTHROPIC_MODEL, MODEL, GEMINI_TEXT_MODEL, GEMINI_LITE_MODEL, GROQ_MODEL, GROQ_SIMPLE_MODEL, CEREBRAS_MODEL, OPENROUTER_MODEL
 import { trace } from "./zalo.js";
 import { logEvent } from "./db.js";
+import { CLAUDE_DEFAULT_MODEL, claudeRequestBody, claudeText } from "./claude.js";
 
 export const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const COOLDOWN_MS = 15 * 60 * 1000; // after a quota/rate-limit error, skip that provider for a while
 const skipUntil = {};
 
-const isQuotaError = (msg) => /4006|neurons|daily free allocation|quota|rate.?limit|too many requests|\b429\b|exhausted/i.test(msg);
+// "credit balance" / "billing" = Anthropic account out of funds: also a reason to skip that provider for a while
+const isQuotaError = (msg) => /4006|neurons|daily free allocation|quota|rate.?limit|too many requests|\b429\b|exhausted|credit balance|billing/i.test(msg);
 
 // ---------- Workers AI ----------
 function workersText(out) {
@@ -78,7 +81,20 @@ async function viaOpenAICompatible(env, { base, key, model, extraHeaders = {} },
   return data.choices?.[0]?.message?.content || "";
 }
 
+// ---------- Anthropic Claude (Messages API) ----------
+async function viaClaude(env, messages, { max_tokens }) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify(claudeRequestBody(messages, { max_tokens, model: env.ANTHROPIC_MODEL || CLAUDE_DEFAULT_MODEL })),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`${res.status} (claude): ${JSON.stringify(data).slice(0, 200)}`);
+  return claudeText(data);
+}
+
 const PROVIDERS = {
+  claude: { label: "Claude Haiku 5.5", enabled: (env) => !!env.ANTHROPIC_API_KEY, run: (env, messages, opts) => viaClaude(env, messages, opts) },
   workers: { label: "Cloudflare Workers AI", enabled: () => true, run: viaWorkers },
   gemini: { label: "Gemini Flash", enabled: (env) => !!env.GEMINI_API_KEY, run: (env, messages, opts) => viaGemini(env, messages, opts) },
   // Same Google key, separate free quota per model
@@ -127,7 +143,7 @@ const PROVIDERS = {
 };
 
 const ORDER = {
-  main: ["workers", "gemini", "geminiLite", "groq", "cerebras", "openrouter"],
+  main: ["claude", "workers", "gemini", "geminiLite", "groq", "cerebras", "openrouter"],
   simple: ["groq", "cerebras", "geminiLite", "workers", "gemini", "openrouter"],
 };
 
