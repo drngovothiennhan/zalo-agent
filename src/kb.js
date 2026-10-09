@@ -42,7 +42,7 @@ const DOC_TYPE_WORDS = ["tờ trình", "đề cương", "quyết định", "kế
 
 // Best saved template ("mẫu") for a document request: same document type, most similar wording.
 // Returns [{ doc_name, content }] with the beginning of the whole template (header, legal bases, structure).
-export async function findTemplate(env, request, maxChars = 2500) {
+export async function findTemplate(env, request, maxChars = 4500) {
   const lower = String(request || "").toLowerCase().normalize("NFC");
   const type = DOC_TYPE_WORDS.find((t) => lower.includes(t));
   if (!type) return [];

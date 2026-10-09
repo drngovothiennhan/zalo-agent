@@ -63,7 +63,8 @@ Trả lời ĐÚNG theo khuôn dưới đây, mỗi trường bắt đầu bằn
 @@NOI_NHAN: các nơi nhận, ngăn cách bằng dấu ; (ví dụ: Như Điều 3; Lưu: VT)
 @@CHUC_VU_KY: ví dụ "CHỦ TỊCH", "HIỆU TRƯỞNG", "KT. CHỦ TỊCH\\nPHÓ CHỦ TỊCH"
 @@NGUOI_KY: họ tên người ký nếu người dùng cho biết, nếu không để trống
-Quy tắc: viết đúng thể thức và văn phong hành chính Việt Nam; thông tin người dùng không cung cấp (tên cơ quan, số liệu, họ tên) thì để "…" để họ tự điền, không bịa. Căn cứ pháp lý chỉ dẫn văn bản có trong phần "Mẫu/tài liệu tham khảo" hoặc do người dùng nêu; nếu không có thì ghi "Căn cứ …" để người dùng tự điền. Nếu có mẫu tham khảo, bám sát bố cục và câu chữ của mẫu.`;
+Quy tắc: viết đúng thể thức và văn phong hành chính Việt Nam; thông tin người dùng không cung cấp (tên cơ quan, số liệu, họ tên) thì để "…" để họ tự điền, không bịa. Căn cứ pháp lý chỉ dẫn văn bản có trong phần "Mẫu/tài liệu tham khảo" hoặc do người dùng nêu; nếu không có thì ghi "Căn cứ …" để người dùng tự điền. Nếu có mẫu tham khảo, bám sát bố cục và câu chữ của mẫu.
+Nội dung phải đầy đủ và cụ thể, không viết sơ sài: kế hoạch/báo cáo có các mục lớn I, II, III… (mục đích, yêu cầu, nội dung, thời gian, kinh phí, tổ chức thực hiện, kiến nghị…) với các hạng mục và việc làm cụ thể; quyết định có phần căn cứ và đủ các Điều (phạm vi, nội dung, tổ chức thực hiện, hiệu lực); biên bản có diễn biến và kết luận. Mỗi mục có ít nhất vài câu hoặc vài gạch đầu dòng.`;
 
 function parseFields(raw) {
   const out = {};
@@ -139,7 +140,7 @@ export async function makeFile(env, origin, kind, request, templates = []) {
     const ref = templates.length
       ? `\n\nMẫu/tài liệu tham khảo tìm được trong kho tài liệu (dùng nếu liên quan):\n${templates.map((t) => `--- "${t.doc_name}" ---\n${t.content}`).join("\n\n")}`
       : "";
-    const raw = stripFences(await complete(env, WORD_SYSTEM.replace("{now}", now), request + ref, { max_tokens: 2000 }));
+    const raw = stripFences(await complete(env, WORD_SYSTEM.replace("{now}", now), request + ref, { max_tokens: 3500 }));
     const f = parseFields(raw);
     let inner;
     let title;
