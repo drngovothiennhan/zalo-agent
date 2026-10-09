@@ -14,6 +14,7 @@ import { runSeed } from "./seed.js";
 import { aiStatus } from "./llm.js";
 import { BOTS, botById, botByPath, botEnv } from "./bots.js";
 import { isWeatherQuestion, weatherPlace, needsLive, liveAnswer } from "./live.js";
+import { alarmLink, handleAlarm } from "./alarm.js";
 import SEED_MAU_UBND from "../seed/mau-ubnd-2026-10.json" with { type: "json" };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -23,6 +24,7 @@ const HELP = `Mình là trợ lý của gia đình. Bạn có thể:
 - Hỏi bất cứ điều gì: thực đơn, sức khỏe, bài vở, soạn văn bản…
 - Gửi ảnh (kèm câu hỏi nếu muốn): đọc giấy tờ, đơn thuốc, bài tập của con, món ăn…
 - Lưu thông tin chung: "ghi nhớ: bé An dị ứng tôm" · "xem ghi chú" · "xóa ghi chú 3"
+- Báo thức: "đặt báo thức 5h30 sáng mai" → bot gửi link để thêm chuông báo vào điện thoại
 - Nhắc việc: "nhắc tôi 7h sáng mai lấy mẫu thức ăn", "nhắc tôi 21h mỗi ngày uống thuốc" · "xem lịch nhắc" · "hủy nhắc 2"
 - Thời tiết: "thời tiết", "thời tiết Đà Lạt", hoặc hỏi tự nhiên "mai Đà Lạt có mưa không"
 - Tin mới, giá cả: "tin tức hôm nay", "giá vàng hôm nay", "tỷ giá đô la", "giá xăng" (bot tra cứu trên mạng)
@@ -143,7 +145,10 @@ async function handleCommand(env, ctx) {
     await sendText(env, chatId, ok ? `Đã hủy nhắc #${m[1]}.` : `Không tìm thấy lịch nhắc #${m[1]}.`);
     return true;
   }
-  if (/^(nhắc|\/remind)/.test(lower) && !/^nhắc lại\b/.test(lower)) {
+  if (
+    (/^(nhắc|\/remind)/.test(lower) && !/^nhắc lại\b/.test(lower)) ||
+    /^(?:đặt |cài |hẹn )?(báo thức|chuông báo|hẹn giờ|đánh thức)|^gọi (tôi|mình|em|anh|chị|con) dậy/.test(lower)
+  ) {
     await typing(env, chatId);
     let r = null;
     try {
@@ -160,7 +165,12 @@ async function handleCommand(env, ctx) {
     const now = Date.now();
     if (due < now - 60 * 1000) while (due < now) due += DAY; // time already passed -> next occurrence
     const id = await db.addReminder(env, { chatId, text: r.task, dueAt: due, repeat: r.repeat, author: who });
-    await sendText(env, chatId, `Đã đặt nhắc #${id}: "${r.task}" lúc ${formatLocal(due)}${REPEAT_LABEL[r.repeat] || ""}.`);
+    await sendText(
+      env,
+      chatId,
+      `Đã đặt nhắc #${id}: "${r.task}" lúc ${formatLocal(due)}${REPEAT_LABEL[r.repeat] || ""}. Đến giờ bot sẽ nhắn bạn.\n` +
+        `Muốn điện thoại tự đổ chuông (kể cả không mở Zalo), bấm link này rồi chọn "Thêm vào Lịch điện thoại":\n${alarmLink(origin, { due, repeat: r.repeat, task: r.task })}`
+    );
     return true;
   }
 
@@ -578,6 +588,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname.startsWith("/f/") && request.method === "GET") return serveFile(env, url);
+    if ((url.pathname === "/alarm" || url.pathname === "/alarm.ics") && request.method === "GET") return handleAlarm(url);
     if (url.pathname === "/kb" || url.pathname.startsWith("/kb/")) return handleKb(request, env, url);
 
     // One-time helper: GET /setup?key=<secret>[&bot=binbo] registers this host as that bot's Zalo webhook.

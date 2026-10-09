@@ -65,6 +65,7 @@ export async function extractReminder(env, text) {
 Quy tắc:
 - datetime theo giờ Việt Nam, luôn ở tương lai so với thời điểm hiện tại.
 - "sáng" mặc định 07:00, "trưa" 11:30, "chiều" 16:00, "tối" 20:00 nếu không nói giờ cụ thể. "7h tối" là 19:00.
+- Báo thức/đánh thức/hẹn giờ cũng là lịch nhắc; nếu không nói việc gì thì task là "Báo thức" (hoặc "Dậy" khi nhờ gọi dậy).
 - "mỗi ngày/hằng ngày" là daily; "mỗi tuần/thứ X hằng tuần" là weekly; còn lại none.
 - Nếu đây không phải yêu cầu đặt lịch nhắc, trả về {"is_reminder": false}.`;
   const raw = await runText(
