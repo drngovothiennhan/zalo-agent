@@ -13,6 +13,7 @@ export const BOTS = {
     secretVar: "WEBHOOK_SECRET",
     allowedVar: "ALLOWED_IDS",
     personaVar: "BOT_PERSONA",
+    allowedIds: ["16f09b735831b16fe820"], // Nguyễn Hảo (added on top of ALLOWED_IDS)
   },
   binbo: {
     id: "binbo",
@@ -23,7 +24,10 @@ export const BOTS = {
     allowedVar: "ALLOWED_IDS_BINBO",
     personaVar: "BOT_PERSONA_BINBO",
     // Zalo gives each person a different ID in each bot. Add more family IDs here (or in ALLOWED_IDS_BINBO).
-    allowedIds: ["ff1ea034bb7f52210b6e"], // anh Nhân
+    allowedIds: [
+      "ff1ea034bb7f52210b6e", // anh Nhân
+      "16f09b735831b16fe820", // Nguyễn Hảo
+    ],
   },
 };
 
