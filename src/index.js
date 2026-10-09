@@ -558,7 +558,17 @@ export default {
       const benv = botEnv(env, bot);
       if (!benv.BOT_TOKEN || !secret) return Response.json({ ok: false, bot: bot.id, missing: [!benv.BOT_TOKEN && bot.tokenVar, !secret && bot.secretVar].filter(Boolean) });
       const data = await zalo(benv, "setWebhook", { url: `${url.origin}${bot.path}`, secret_token: secret });
-      return Response.json({ bot: bot.id, name: bot.name, webhook: `${url.origin}${bot.path}`, result: data });
+      const out = { bot: bot.id, name: bot.name, webhook: `${url.origin}${bot.path}`, result: data };
+      if (!data?.ok) {
+        const me = await zalo(benv, "getMe");
+        const t = benv.BOT_TOKEN;
+        out.token_check = {
+          valid: !!me?.ok,
+          looks_like: `${t.length} ký tự, dạng ${/^\d+:[\w-]+$/.test(t) ? "<số>:<chuỗi> (đúng dạng)" : "KHÔNG đúng dạng <số>:<chuỗi>"}`,
+          hint: me?.ok ? "Token đúng, Zalo từ chối webhook" : "Zalo không nhận token này: copy lại token Bin Bơ và dán lại vào BOT_TOKEN_BINBO",
+        };
+      }
+      return Response.json(out);
     }
 
     // Diagnostics: GET /debug?key=<WEBHOOK_SECRET>

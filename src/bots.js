@@ -34,7 +34,7 @@ export function botEnv(env, bot) {
   return {
     ...env,
     BOT_ID: bot.id,
-    BOT_TOKEN: env[bot.tokenVar],
+    BOT_TOKEN: String(env[bot.tokenVar] || "").replace(/^["'\s]+|["'\s]+$/g, "") || undefined, // tolerate pasted spaces/quotes
     BOT_NAME: (bot.id === "main" && env.BOT_NAME) || bot.name,
     BOT_PERSONA: env[bot.personaVar] || "",
     ALLOWED_IDS: env[bot.allowedVar] || env.ALLOWED_IDS || env.OWNER_ID || "",
