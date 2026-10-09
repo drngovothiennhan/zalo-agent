@@ -22,6 +22,8 @@ export const BOTS = {
     secretVar: "WEBHOOK_SECRET_BINBO",
     allowedVar: "ALLOWED_IDS_BINBO",
     personaVar: "BOT_PERSONA_BINBO",
+    // Zalo gives each person a different ID in each bot. Add more family IDs here (or in ALLOWED_IDS_BINBO).
+    allowedIds: ["ff1ea034bb7f52210b6e"], // anh Nhân
   },
 };
 
@@ -37,6 +39,8 @@ export function botEnv(env, bot) {
     BOT_TOKEN: String(env[bot.tokenVar] || "").replace(/^["'\s]+|["'\s]+$/g, "") || undefined, // tolerate pasted spaces/quotes
     BOT_NAME: (bot.id === "main" && env.BOT_NAME) || bot.name,
     BOT_PERSONA: env[bot.personaVar] || "",
-    ALLOWED_IDS: env[bot.allowedVar] || env.ALLOWED_IDS || env.OWNER_ID || "",
+    ALLOWED_IDS:
+      [env[bot.allowedVar], (bot.allowedIds || []).join(",")].filter(Boolean).join(",") ||
+      (bot.id === "main" ? env.ALLOWED_IDS || env.OWNER_ID || "" : ""),
   };
 }
