@@ -5,8 +5,8 @@ import { logEvent } from "./db.js";
 import { nowDescription } from "./time.js";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const WORKERS_VISION_MODEL = "@cf/google/gemma-3-12b-it";
-const FALLBACK_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
+const DEFAULT_GEMINI_MODEL = "gemini-flash-latest";
+const DEFAULT_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 
 const VISION_PROMPT = `Bạn là trợ lý gia đình trên Zalo, đang xem một bức ảnh người dùng gửi. Thời điểm hiện tại: ${"{now}"}.
 Trả lời bằng tiếng Việt, ngắn gọn, rõ ý, gạch đầu dòng khi liệt kê, không dùng bảng.
@@ -25,8 +25,7 @@ async function fetchImage(url) {
   return { buf, type: type.startsWith("image/") ? type : "image/jpeg" };
 }
 
-async function viaGemini(env, system, question, img) {
-  const model = env.GEMINI_MODEL || "gemini-2.5-flash";
+async function geminiCall(env, model, system, question, img) {
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
@@ -41,41 +40,35 @@ async function viaGemini(env, system, question, img) {
       generationConfig: { maxOutputTokens: 1500 },
     }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${JSON.stringify(data).slice(0, 200)}`);
-  return (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("").trim();
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+async function viaGemini(env, system, question, img) {
+  let model = env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+  let r = await geminiCall(env, model, system, question, img);
+  // Retired model: Google names the replacement in the error ("use models/<name>"), retry once with it
+  const suggested = !r.ok && /use models\/([\w.-]+)/.exec(JSON.stringify(r.data))?.[1];
+  if (suggested && suggested !== model) {
+    model = suggested;
+    r = await geminiCall(env, model, system, question, img);
+  }
+  if (!r.ok) throw new Error(`Gemini ${r.status} (${model}): ${JSON.stringify(r.data).slice(0, 200)}`);
+  const u = r.data.usageMetadata || {};
+  await logEvent(env, "vision.usage", JSON.stringify({ via: "gemini", model, input: u.promptTokenCount, output: u.candidatesTokenCount, total: u.totalTokenCount }));
+  return (r.data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("").trim();
 }
 
 async function viaWorkersAI(env, system, question, img) {
-  const dataUrl = `data:${img.type};base64,${Buffer.from(img.buf).toString("base64")}`;
-  try {
-    const out = await env.AI.run(env.VISION_MODEL || WORKERS_VISION_MODEL, {
-      messages: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: question },
-            { type: "image_url", image_url: { url: dataUrl } },
-          ],
-        },
-      ],
-      max_tokens: 1200,
-    });
-    const text = typeof out?.response === "string" ? out.response : out?.choices?.[0]?.message?.content || "";
-    if (text.trim()) return text.trim();
-    throw new Error("empty response");
-  } catch (e) {
-    trace("vision.fallback", { model: env.VISION_MODEL || WORKERS_VISION_MODEL, message: String(e && e.message) });
-    await logEvent(env, "vision.workersai.error", String(e && e.message));
+  const model = env.VISION_MODEL || DEFAULT_VISION_MODEL;
+  if (model.includes("llama-3.2")) {
+    try {
+      await env.AI.run(model, { prompt: "agree" }); // one-time license agreement
+    } catch {
+      /* already agreed */
+    }
   }
-  // Fallback: Llama 3.2 Vision (needs a one-time license agreement)
-  try {
-    await env.AI.run(FALLBACK_VISION_MODEL, { prompt: "agree" });
-  } catch {
-    /* already agreed or not needed */
-  }
-  const out = await env.AI.run(FALLBACK_VISION_MODEL, {
+  const out = await env.AI.run(model, {
     messages: [
       { role: "system", content: system },
       { role: "user", content: question },
@@ -83,6 +76,8 @@ async function viaWorkersAI(env, system, question, img) {
     image: [...new Uint8Array(img.buf)],
     max_tokens: 1200,
   });
+  const u = out?.usage || {};
+  await logEvent(env, "vision.usage", JSON.stringify({ via: "workers-ai", model, input: u.prompt_tokens, output: u.completion_tokens, total: u.total_tokens }));
   return String(out?.response || out?.description || "").trim();
 }
 
@@ -90,14 +85,21 @@ async function askImage(env, url, system, question) {
   const img = await fetchImage(url);
   if (env.GEMINI_API_KEY) {
     try {
-      return await viaGemini(env, system, question, img);
+      const text = await viaGemini(env, system, question, img);
+      if (text) return text;
+      throw new Error("Gemini trả về rỗng");
     } catch (e) {
       // Gemini quota/key/model problem: fall back to Workers AI instead of failing the photo
       trace("vision.gemini.error", { message: String(e && e.message).slice(0, 300) });
       await logEvent(env, "vision.gemini.error", String(e && e.message));
     }
   }
-  return viaWorkersAI(env, system, question, img);
+  try {
+    return await viaWorkersAI(env, system, question, img);
+  } catch (e) {
+    await logEvent(env, "vision.workersai.error", String(e && e.message));
+    throw e;
+  }
 }
 
 export async function describeImage(env, { url, caption }) {
