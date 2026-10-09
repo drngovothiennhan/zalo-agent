@@ -140,7 +140,7 @@ export async function makeFile(env, origin, kind, request, templates = []) {
     const ref = templates.length
       ? `\n\nMẫu/tài liệu tham khảo tìm được trong kho tài liệu (dùng nếu liên quan):\n${templates.map((t) => `--- "${t.doc_name}" ---\n${t.content}`).join("\n\n")}`
       : "";
-    const raw = stripFences(await complete(env, WORD_SYSTEM.replace("{now}", now), request + ref, { max_tokens: 3500 }));
+    const raw = stripFences(await complete(env, WORD_SYSTEM.replace("{now}", now), request + ref, { max_tokens: 3500, tier: "smart" }));
     const f = parseFields(raw);
     let inner;
     let title;
@@ -159,7 +159,7 @@ export async function makeFile(env, origin, kind, request, templates = []) {
     });
     return { title, link, usedTemplates: [...new Set(templates.map((t) => t.doc_name))] };
   }
-  const csv = stripFences(await complete(env, EXCEL_SYSTEM.replace("{now}", now), request, { max_tokens: 2500 }));
+  const csv = stripFences(await complete(env, EXCEL_SYSTEM.replace("{now}", now), request, { max_tokens: 2500, tier: "smart" }));
   const firstLine = csv.split("\n")[0] || "";
   const title = request.slice(0, 60);
   const link = await storeFile(env, origin, {

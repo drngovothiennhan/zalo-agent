@@ -4,7 +4,8 @@
 // More bots on the same Worker: see bots.js (e.g. BOT_TOKEN_BINBO, WEBHOOK_SECRET_BINBO, ALLOWED_IDS_BINBO)
 import { DEBUG, trace, zalo, sendText, typing } from "./zalo.js";
 import * as db from "./db.js";
-import { chat, extractReminder } from "./brain.js";
+import { chat, extractReminder, complete } from "./brain.js";
+import { keywordRoute, needsClassifier, parseClassification, CLASSIFY_PROMPT } from "./router.js";
 import { wakeMatch, isListening, worthAnswering, handleChitchat, handleListenToggle } from "./chitchat.js";
 import { parseLocal, formatLocal } from "./time.js";
 import { describeImage } from "./vision.js";
@@ -473,6 +474,34 @@ async function handleOther(env, ctx, update, msg, isGroup, addressed) {
   );
 }
 
+// Plain-words requests ("vẽ con mèo đội mũ", "lập bảng tính theo dõi cân nặng") go to the right tool.
+// Free providers only; Word/Excel use the smart chain (Claude last, and only if a key was added).
+// Returns true when the request was handled.
+async function handleSmartRequest(env, ctx) {
+  const { chatId, text, origin } = ctx;
+  let tool = keywordRoute(text);
+  if (!tool && needsClassifier(text)) {
+    try {
+      tool = parseClassification(await complete(env, CLASSIFY_PROMPT, text, { max_tokens: 30, temperature: 0, tier: "simple" }));
+    } catch (e) {
+      trace("route.error", { message: String(e && e.message) });
+    }
+  }
+  if (!tool || tool === "chat") return false;
+  if (tool === "word" || tool === "excel") return handleCommand(env, { ...ctx, text: `tạo file ${tool}: ${text}` });
+
+  await sendText(env, chatId, "Đang vẽ, bạn chờ chút nhé… 🎨");
+  try {
+    const url = await draw(env, origin, text);
+    const sent = await zalo(env, "sendPhoto", { chat_id: chatId, photo: url, caption: text.slice(0, 200) });
+    if (!sent.ok) await sendText(env, chatId, `Tranh đây: ${url}`);
+  } catch (e) {
+    trace("draw.error", { message: String(e && e.message) });
+    await sendText(env, chatId, "Mình chưa vẽ được lúc này, bạn thử lại sau nhé.");
+  }
+  return true;
+}
+
 async function handleUpdate(env, update, origin) {
   const msg = update?.message || update?.data?.message;
   if (!msg) return trace("skip", { reason: "no message field", keys: Object.keys(update || {}) });
@@ -581,6 +610,9 @@ async function handleUpdate(env, update, origin) {
     await db.saveTurn(env, chatId, text, live);
     return;
   }
+
+  // Requests for a picture or a Word/Excel file in plain words (not in listening mode)
+  if (!chatty && (await handleSmartRequest(env, { ...ctx, text }))) return;
 
   let reply;
   const [history, notes, kb] = await Promise.all([db.loadHistory(env, chatId), db.listNotes(env), searchKb(env, text)]);

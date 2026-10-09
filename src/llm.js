@@ -2,9 +2,10 @@
 // A provider is used only when its key is set (Workers AI needs none). When one fails
 // (free quota used up, rate limit, model error, empty answer) the next one gets the same request.
 //
-//   tier "main"   (chat, Word/Excel):        Claude Haiku 5.5 -> Workers AI -> Gemini Flash -> Gemini Flash-Lite -> Groq -> Cerebras -> OpenRouter
-//   tier "simple" (reminders, short prompts): Groq -> Cerebras -> Gemini Flash-Lite -> Workers AI -> Gemini Flash -> OpenRouter
-//   Claude is paid per token (no free quota) and only runs when ANTHROPIC_API_KEY is set.
+//   tier "main"   (chat):                              Workers AI -> Gemini Flash -> Gemini Flash-Lite -> Groq -> Cerebras -> OpenRouter
+//   tier "simple" (reminders, classification):         Groq -> Cerebras -> Gemini Flash-Lite -> Workers AI -> Gemini Flash -> OpenRouter
+//   tier "smart"  (Word/Excel): the free chain above, with Claude Haiku 5.5 only as the last resort.
+//   Claude is paid per token and only runs when ANTHROPIC_API_KEY is set. Free tiers are tried first on every tier.
 //
 // Secrets (Cloudflare > Worker > Settings > Variables and Secrets):
 //   ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY, OPENROUTER_API_KEY
@@ -143,14 +144,15 @@ const PROVIDERS = {
 };
 
 const ORDER = {
-  main: ["claude", "workers", "gemini", "geminiLite", "groq", "cerebras", "openrouter"],
+  main: ["workers", "gemini", "geminiLite", "groq", "cerebras", "openrouter"],
+  smart: ["workers", "gemini", "geminiLite", "groq", "cerebras", "openrouter", "claude"],
   simple: ["groq", "cerebras", "geminiLite", "workers", "gemini", "openrouter"],
 };
 
 // Which providers are switched on (for the "trạng thái AI" command)
 export function aiStatus(env) {
   const now = Date.now();
-  return ORDER.main.map((id) => {
+  return [...new Set([...ORDER.main, ...ORDER.smart])].map((id) => {
     const p = PROVIDERS[id];
     const state = !p.enabled(env) ? "chưa có khóa" : (skipUntil[id] || 0) > now ? "tạm nghỉ (vừa hết hạn mức)" : "sẵn sàng";
     return `- ${p.label}: ${state}`;
