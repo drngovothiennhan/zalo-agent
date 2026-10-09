@@ -394,7 +394,8 @@ async function handleImage(env, ctx, msg, session) {
     reply = await describeImage(env, { url: msg.photo_url, caption: msg.caption });
   } catch (e) {
     trace("vision.error", { message: String(e && e.message) });
-    reply = "Mình chưa đọc được ảnh này (có thể đã hết hạn mức AI hôm nay). Bạn thử lại sau nhé.";
+    await db.logEvent(env, "vision.error", String((e && (e.stack || e.message)) || e));
+    reply = `Mình chưa đọc được ảnh này. Lỗi: ${String(e && e.message).slice(0, 120)}`;
   }
   await sendText(env, chatId, reply);
   await db.saveTurn(env, chatId, `[${who || "Người dùng"} gửi một ảnh]${msg.caption ? " " + msg.caption : ""}`, reply);

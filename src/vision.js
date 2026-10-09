@@ -1,6 +1,7 @@
 // Read images sent on Zalo: Gemini (if GEMINI_API_KEY is set) or Workers AI vision models
 import { Buffer } from "node:buffer";
 import { trace } from "./zalo.js";
+import { logEvent } from "./db.js";
 import { nowDescription } from "./time.js";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -66,6 +67,7 @@ async function viaWorkersAI(env, system, question, img) {
     throw new Error("empty response");
   } catch (e) {
     trace("vision.fallback", { model: env.VISION_MODEL || WORKERS_VISION_MODEL, message: String(e && e.message) });
+    await logEvent(env, "vision.workersai.error", String(e && e.message));
   }
   // Fallback: Llama 3.2 Vision (needs a one-time license agreement)
   try {
@@ -92,6 +94,7 @@ async function askImage(env, url, system, question) {
     } catch (e) {
       // Gemini quota/key/model problem: fall back to Workers AI instead of failing the photo
       trace("vision.gemini.error", { message: String(e && e.message).slice(0, 300) });
+      await logEvent(env, "vision.gemini.error", String(e && e.message));
     }
   }
   return viaWorkersAI(env, system, question, img);
