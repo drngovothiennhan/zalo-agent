@@ -8,6 +8,7 @@ import { chat, extractReminder, complete } from "./brain.js";
 import { keywordRoute, needsClassifier, parseClassification, CLASSIFY_PROMPT } from "./router.js";
 import { stripLeadIn, pointsToMissingMedia } from "./intent.js";
 import { nextOccurrence } from "./schedule.js";
+import { setWatch, runWeatherWatch } from "./weatherwatch-jobs.js";
 import { wakeMatch, isListening, worthAnswering, handleChitchat, handleListenToggle } from "./chitchat.js";
 import { parseLocal, formatLocal } from "./time.js";
 import { describeImage } from "./vision.js";
@@ -115,6 +116,20 @@ async function handleCommand(env, ctx) {
   if (n === "/reset" || n === "xoa ngu canh") {
     await db.clearHistory(env, chatId);
     await sendText(env, chatId, "Đã xóa ngữ cảnh cuộc trò chuyện. Mình bắt đầu lại nhé!");
+    return true;
+  }
+
+  // ----- Weather watch for TP.HCM (morning update, rain at 16:00) -----
+  if (/^(bat|tat) canh bao thoi tiet$/.test(n)) {
+    const on = n.startsWith("bat");
+    await setWatch(env, chatId, on);
+    await sendText(
+      env,
+      chatId,
+      on
+        ? "Đã bật cảnh báo thời tiết TP.HCM cho nhóm này: 6h30 sáng báo thời tiết, 16h báo mưa và nhắc đi về cẩn thận khi trời tối. Tắt: \"tắt cảnh báo thời tiết\"."
+        : "Đã tắt cảnh báo thời tiết cho nhóm này."
+    );
     return true;
   }
 
@@ -752,6 +767,7 @@ export default {
     ctx.waitUntil(runReminders(env).catch((e) => trace("cron.error", { message: String(e && e.stack) })));
     ctx.waitUntil(runBriefs(env).catch((e) => trace("brief.error", { message: String(e && e.stack) })));
     ctx.waitUntil(runSpecialDayAlerts(env).catch((e) => trace("specialdays.error", { message: String(e && e.stack) })));
+    ctx.waitUntil(runWeatherWatch(env).catch((e) => trace("weatherwatch.error", { message: String(e && e.stack) })));
     ctx.waitUntil(runSeed(env, SEED_MAU_UBND).catch((e) => trace("seed.error", { message: String(e && e.stack) })));
   },
 };
