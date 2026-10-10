@@ -63,7 +63,7 @@ function page(url, p) {
     `intent:#Intent;action=android.intent.action.SET_ALARM;` +
     `i.android.intent.extra.alarm.HOUR=${lp.h};i.android.intent.extra.alarm.MINUTES=${lp.mi};` +
     `S.android.intent.extra.alarm.MESSAGE=${encodeURIComponent(p.m)};end`;
-  const repeat = p.r === "daily" ? " (lặp lại mỗi ngày)" : p.r === "weekly" ? " (lặp lại mỗi tuần)" : "";
+  const repeat = p.r === "daily" ? " (lặp lại mỗi ngày)" : p.r === "weekly" ? " (lặp lại mỗi tuần)" : p.r === "weekdays" ? " (thứ 2 đến thứ 6)" : "";
   return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Đặt báo thức</title>
 <style>

@@ -63,12 +63,12 @@ export async function chat(env, { history, text, who, notes, kb }) {
 export async function extractReminder(env, text) {
   const system = `Bạn là bộ phân tích lịch nhắc. Thời điểm hiện tại: ${nowDescription()}.
 Đọc yêu cầu của người dùng và trả về DUY NHẤT một đối tượng JSON, không giải thích:
-{"is_reminder": true, "datetime": "YYYY-MM-DD HH:mm", "task": "việc cần nhắc, viết ngắn gọn", "repeat": "none" | "daily" | "weekly"}
+{"is_reminder": true, "datetime": "YYYY-MM-DD HH:mm", "task": "việc cần nhắc, viết ngắn gọn", "repeat": "none" | "daily" | "weekly" | "weekdays"}
 Quy tắc:
 - datetime theo giờ Việt Nam, luôn ở tương lai so với thời điểm hiện tại.
 - "sáng" mặc định 07:00, "trưa" 11:30, "chiều" 16:00, "tối" 20:00 nếu không nói giờ cụ thể. "7h tối" là 19:00.
 - Báo thức/đánh thức/hẹn giờ cũng là lịch nhắc; nếu không nói việc gì thì task là "Báo thức" (hoặc "Dậy" khi nhờ gọi dậy).
-- "mỗi ngày/hằng ngày" là daily; "mỗi tuần/thứ X hằng tuần" là weekly; còn lại none.
+- "mỗi ngày/hằng ngày" là daily; "mỗi tuần/thứ X hằng tuần" là weekly; "các ngày trong tuần/thứ 2 đến thứ 6/từ thứ 2 đến thứ 6/ngày làm việc" là weekdays (thứ 2 đến thứ 6, bỏ thứ 7 và chủ nhật); còn lại none.
 - Nếu đây không phải yêu cầu đặt lịch nhắc, trả về {"is_reminder": false}.`;
   const raw = await runText(
     env,
@@ -87,6 +87,6 @@ Quy tắc:
     return null;
   }
   if (!data || data.is_reminder === false || !data.datetime || !data.task) return null;
-  const repeat = ["daily", "weekly"].includes(data.repeat) ? data.repeat : "none";
+  const repeat = ["daily", "weekly", "weekdays"].includes(data.repeat) ? data.repeat : "none";
   return { datetime: String(data.datetime), task: String(data.task).trim(), repeat };
 }

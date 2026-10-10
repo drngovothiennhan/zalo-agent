@@ -7,6 +7,7 @@ import * as db from "./db.js";
 import { chat, extractReminder, complete } from "./brain.js";
 import { keywordRoute, needsClassifier, parseClassification, CLASSIFY_PROMPT } from "./router.js";
 import { stripLeadIn, pointsToMissingMedia } from "./intent.js";
+import { nextOccurrence } from "./schedule.js";
 import { wakeMatch, isListening, worthAnswering, handleChitchat, handleListenToggle } from "./chitchat.js";
 import { parseLocal, formatLocal } from "./time.js";
 import { describeImage } from "./vision.js";
@@ -23,7 +24,7 @@ import { handleFortune } from "./fortune.js";
 import SEED_MAU_UBND from "../seed/mau-ubnd-2026-10.json" with { type: "json" };
 
 const DAY = 24 * 60 * 60 * 1000;
-const REPEAT_LABEL = { none: "", daily: " (lặp lại mỗi ngày)", weekly: " (lặp lại mỗi tuần)" };
+const REPEAT_LABEL = { none: "", daily: " (lặp lại mỗi ngày)", weekly: " (lặp lại mỗi tuần)", weekdays: " (thứ 2 đến thứ 6)" };
 
 const HELP = `Mình là trợ lý của gia đình. Bạn có thể:
 - Hỏi bất cứ điều gì: thực đơn, sức khỏe, bài vở, soạn văn bản…
@@ -651,10 +652,8 @@ async function runReminders(env) {
       continue;
     }
     await sendText(benv, r.chat_id, `⏰ Nhắc việc: ${r.text}`);
-    if (r.repeat === "daily" || r.repeat === "weekly") {
-      const step = r.repeat === "daily" ? DAY : 7 * DAY;
-      let next = r.due_at;
-      while (next <= now) next += step;
+    const next = nextOccurrence(r.due_at, now, r.repeat);
+    if (next) {
       await db.rescheduleReminder(env, r.id, next);
     } else {
       await db.removeReminder(env, r.id);
