@@ -19,7 +19,8 @@ const COOLDOWN_MS = 15 * 60 * 1000; // after a quota/rate-limit error, skip that
 const skipUntil = {};
 
 // "credit balance" / "billing" = Anthropic account out of funds: also a reason to skip that provider for a while
-const isQuotaError = (msg) => /4006|neurons|daily free allocation|quota|rate.?limit|too many requests|\b429\b|exhausted|credit balance|billing/i.test(msg);
+// "location is not supported" = Google refuses requests from this Worker's region: skip it for a while too
+const isQuotaError = (msg) => /4006|neurons|daily free allocation|quota|rate.?limit|too many requests|\b429\b|exhausted|credit balance|billing|location is not supported|FAILED_PRECONDITION/i.test(msg);
 
 // ---------- Workers AI ----------
 function workersText(out) {

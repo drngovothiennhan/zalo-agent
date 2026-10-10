@@ -6,6 +6,7 @@ import { DEBUG, trace, zalo, sendText, typing } from "./zalo.js";
 import * as db from "./db.js";
 import { chat, extractReminder, complete } from "./brain.js";
 import { keywordRoute, needsClassifier, parseClassification, CLASSIFY_PROMPT } from "./router.js";
+import { stripLeadIn, pointsToMissingMedia } from "./intent.js";
 import { wakeMatch, isListening, worthAnswering, handleChitchat, handleListenToggle } from "./chitchat.js";
 import { parseLocal, formatLocal } from "./time.js";
 import { describeImage } from "./vision.js";
@@ -116,9 +117,11 @@ async function handleCommand(env, ctx) {
     return true;
   }
 
-  // ----- Notes -----
-  if (/^(ghi nho|\/note)\b/.test(n)) {
-    const content = afterCommand(text, n.startsWith("/note") ? 1 : 2);
+  // ----- Notes ----- (a polite lead-in such as "hãy ghi nhớ" is allowed)
+  const noteText = stripLeadIn(text);
+  const noteN = norm(noteText);
+  if (/^(ghi nho|\/note)\b/.test(noteN)) {
+    const content = afterCommand(noteText, noteN.startsWith("/note") ? 1 : 2);
     if (!content) {
       await sendText(env, chatId, 'Bạn muốn ghi nhớ điều gì? Ví dụ: "ghi nhớ: bé An dị ứng tôm".');
       return true;
@@ -608,6 +611,18 @@ async function handleUpdate(env, update, origin) {
     }
     await sendText(env, chatId, live);
     await db.saveTurn(env, chatId, text, live, who);
+    return;
+  }
+
+  // "…trong hình này" but no picture reached the bot (e.g. a quoted reply): say so plainly, and keep the payload for diagnosis
+  if (!chatty && pointsToMissingMedia(text)) {
+    await db.logEvent(env, "media.quoted_missing", JSON.stringify(update).slice(0, 4000));
+    await sendText(
+      env,
+      chatId,
+      "Mình chưa nhận được ảnh trong tin này (có thể Zalo chỉ gửi phần chữ khi trích dẫn). Anh/chị gửi lại ảnh trực tiếp, kèm câu hỏi trong phần chú thích nhé."
+    );
+    await db.saveTurn(env, chatId, text, "Mình chưa nhận được ảnh trong tin này.", who);
     return;
   }
 
