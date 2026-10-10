@@ -9,6 +9,7 @@ import { keywordRoute, needsClassifier, parseClassification, CLASSIFY_PROMPT } f
 import { stripLeadIn, pointsToMissingMedia } from "./intent.js";
 import { nextOccurrence } from "./schedule.js";
 import { setWatch, runWeatherWatch } from "./weatherwatch-jobs.js";
+import { setTraffic, manualTraffic, runTraffic } from "./traffic-jobs.js";
 import { wakeMatch, isListening, worthAnswering, handleChitchat, handleListenToggle } from "./chitchat.js";
 import { parseLocal, formatLocal } from "./time.js";
 import { describeImage } from "./vision.js";
@@ -130,6 +131,24 @@ async function handleCommand(env, ctx) {
         ? "Đã bật cảnh báo thời tiết TP.HCM cho nhóm này: 6h30 sáng báo thời tiết, 16h báo mưa và nhắc đi về cẩn thận khi trời tối. Tắt: \"tắt cảnh báo thời tiết\"."
         : "Đã tắt cảnh báo thời tiết cho nhóm này."
     );
+    return true;
+  }
+
+  // ----- Traffic watch (kẹt xe) for Thủ Đức roads -----
+  if (/^(bat|tat) canh bao ket xe$/.test(n)) {
+    const on = n.startsWith("bat");
+    await setTraffic(env, chatId, on);
+    await sendText(
+      env,
+      chatId,
+      on
+        ? "Đã bật cảnh báo kẹt xe cho nhóm này: 6h30, 7h, 7h30 sáng và 16h–19h mỗi giờ, chỉ nhắn khi có tuyến đang kẹt hoặc đông. Tắt: \"tắt cảnh báo kẹt xe\"."
+        : "Đã tắt cảnh báo kẹt xe cho nhóm này."
+    );
+    return true;
+  }
+  if (/^(kiem tra|xem) ket xe$/.test(n)) {
+    await sendText(env, chatId, await manualTraffic(env));
     return true;
   }
 
@@ -768,6 +787,7 @@ export default {
     ctx.waitUntil(runBriefs(env).catch((e) => trace("brief.error", { message: String(e && e.stack) })));
     ctx.waitUntil(runSpecialDayAlerts(env).catch((e) => trace("specialdays.error", { message: String(e && e.stack) })));
     ctx.waitUntil(runWeatherWatch(env).catch((e) => trace("weatherwatch.error", { message: String(e && e.stack) })));
+    ctx.waitUntil(runTraffic(env).catch((e) => trace("traffic.error", { message: String(e && e.stack) })));
     ctx.waitUntil(runSeed(env, SEED_MAU_UBND).catch((e) => trace("seed.error", { message: String(e && e.stack) })));
   },
 };
