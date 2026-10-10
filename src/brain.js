@@ -1,6 +1,7 @@
 // LLM calls (Workers AI, falling back to Gemini — see llm.js)
 import { nowDescription } from "./time.js";
 import { runText, DEFAULT_MODEL } from "./llm.js";
+import { tagSpeaker, speakerRule } from "./speaker.js";
 
 export { DEFAULT_MODEL };
 const NOTES_BUDGET = 6000; // max characters of family notes injected into the prompt
@@ -49,9 +50,10 @@ export async function chat(env, { history, text, who, notes, kb }) {
     (env.BOT_PERSONA ? `\n${env.BOT_PERSONA}` : "") +
     `\n\nThời điểm hiện tại: ${nowDescription()}.` +
     (who ? `\nNgười đang nhắn tin: ${who}.` : "") +
+    speakerRule(who) +
     notesBlock(notes) +
     kbBlock(kb);
-  const messages = [{ role: "system", content: system }, ...history, { role: "user", content: text }];
+  const messages = [{ role: "system", content: system }, ...history, { role: "user", content: tagSpeaker(who, text) }];
   const out = await runText(env, messages, { max_tokens: 1200 });
   return out.trim() || "Mình chưa nghĩ ra câu trả lời, bạn thử hỏi lại giúp mình nhé.";
 }

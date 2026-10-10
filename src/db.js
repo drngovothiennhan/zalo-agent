@@ -1,4 +1,5 @@
 // D1 data access: chat history, family notes, reminders
+import { tagSpeaker } from "./speaker.js";
 const HISTORY_LIMIT = 20; // messages loaded as context (10 turns)
 const HISTORY_KEEP = 60; // messages kept per chat
 
@@ -11,11 +12,13 @@ export async function loadHistory(env, chatId) {
   return results.reverse();
 }
 
-export async function saveTurn(env, chatId, userText, reply) {
+export async function saveTurn(env, chatId, userText, reply, who) {
   const now = Date.now();
   const id = String(chatId);
+  // Tag the speaker so a shared (family group) history stays attributable
+  const stored = tagSpeaker(who, userText);
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO messages (chat_id, role, content, created_at) VALUES (?, 'user', ?, ?)").bind(id, userText, now),
+    env.DB.prepare("INSERT INTO messages (chat_id, role, content, created_at) VALUES (?, 'user', ?, ?)").bind(id, stored, now),
     env.DB.prepare("INSERT INTO messages (chat_id, role, content, created_at) VALUES (?, 'assistant', ?, ?)").bind(id, reply, now),
     env.DB.prepare(
       "DELETE FROM messages WHERE chat_id = ? AND id NOT IN (SELECT id FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?)"

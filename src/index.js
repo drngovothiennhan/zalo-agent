@@ -236,7 +236,7 @@ async function handleCommand(env, ctx) {
             ? "(Bản nháp: mở bằng Word/WPS, điền các chỗ \"…\" và rà soát kỹ trước khi trình ký.)"
             : "(File CSV mở trực tiếp bằng Excel/Google Sheets.)")
       );
-      await db.saveTurn(env, chatId, text, `[Đã tạo file ${kind}: ${f.title}]`);
+      await db.saveTurn(env, chatId, text, `[Đã tạo file ${kind}: ${f.title}]`, who);
     } catch (e) {
       trace("file.error", { kind, ms: Date.now() - started, message: String(e && e.message) });
       await sendText(env, chatId, `Mình chưa tạo được file (${String(e && e.message).slice(0, 80)}). Bạn thử lại với yêu cầu ngắn hơn hoặc sau ít phút nhé.`);
@@ -573,7 +573,7 @@ async function handleUpdate(env, update, origin) {
     const history0 = await db.loadHistory(env, chatId);
     let handled = false;
     try {
-      handled = await handleChitchat(env, { text, who }, async (m) => { await typing(env, chatId); const o = await sendText(env, chatId, m); await db.saveTurn(env, chatId, text, m); return o; }, history0);
+      handled = await handleChitchat(env, { text, who }, async (m) => { await typing(env, chatId); const o = await sendText(env, chatId, m); await db.saveTurn(env, chatId, text, m, who); return o; }, history0);
     } catch (e) {
       trace("ai.error", { where: "chitchat", message: String(e && e.message) });
     }
@@ -592,7 +592,7 @@ async function handleUpdate(env, update, origin) {
       w = "Mình chưa lấy được thông tin thời tiết, bạn thử lại sau nhé.";
     }
     await sendText(env, chatId, w);
-    await db.saveTurn(env, chatId, text, w);
+    await db.saveTurn(env, chatId, text, w, who);
     return;
   }
 
@@ -607,7 +607,7 @@ async function handleUpdate(env, update, origin) {
       live = "Mình chưa tra được tin mới lúc này, bạn thử lại sau ít phút nhé.";
     }
     await sendText(env, chatId, live);
-    await db.saveTurn(env, chatId, text, live);
+    await db.saveTurn(env, chatId, text, live, who);
     return;
   }
 
@@ -623,7 +623,7 @@ async function handleUpdate(env, update, origin) {
     reply = "Mình đang gặp lỗi khi suy nghĩ (có thể hết hạn mức AI hôm nay). Bạn thử lại sau ít phút nhé.";
   }
   await sendText(env, chatId, reply);
-  await db.saveTurn(env, chatId, text, reply);
+  await db.saveTurn(env, chatId, text, reply, who);
 }
 
 async function runReminders(env) {
