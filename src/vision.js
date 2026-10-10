@@ -3,6 +3,8 @@ import { Buffer } from "node:buffer";
 import { trace } from "./zalo.js";
 import { logEvent } from "./db.js";
 import { nowDescription } from "./time.js";
+import { sniffImage, headHex } from "./imagecheck.js";
+import { LOCATION_BLOCKED } from "./intent.js";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const DEFAULT_GEMINI_MODEL = "gemini-flash-latest";
@@ -16,13 +18,19 @@ Trả lời bằng tiếng Việt, ngắn gọn, rõ ý, gạch đầu dòng khi
 - Thông tin y khoa (đơn thuốc, kết quả xét nghiệm, da, vết thương…) chỉ mang tính tham khảo, không thay thế bác sĩ; dấu hiệu nguy hiểm thì khuyên đi khám ngay hoặc gọi 115.
 - Chỗ nào nhìn không rõ thì nói rõ là không đọc được, không đoán bừa.`;
 
-async function fetchImage(url) {
+async function fetchImage(env, url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`tải ảnh lỗi HTTP ${res.status}`);
   const buf = await res.arrayBuffer();
   if (buf.byteLength > MAX_IMAGE_BYTES) throw new Error("ảnh quá lớn");
-  const type = (res.headers.get("content-type") || "image/jpeg").split(";")[0];
-  return { buf, type: type.startsWith("image/") ? type : "image/jpeg" };
+  // Judge the file by its bytes, not by the header: a page or error body under the URL is not a picture
+  const type = sniffImage(buf);
+  if (!type) {
+    const shown = (res.headers.get("content-type") || "không rõ").split(";")[0];
+    await logEvent(env, "vision.not_image", JSON.stringify({ contentType: shown, bytes: buf.byteLength, head: headHex(buf) }));
+    throw new Error("tệp tải về không phải ảnh JPEG/PNG/GIF/WebP");
+  }
+  return { buf, type };
 }
 
 async function geminiCall(env, model, system, question, img) {
@@ -81,17 +89,22 @@ async function viaWorkersAI(env, system, question, img) {
   return String(out?.response || out?.description || "").trim();
 }
 
+// Google refuses this Worker's region; once seen, skip Gemini for a while instead of failing every photo
+let geminiSkipUntil = 0;
+
 async function askImage(env, url, system, question) {
-  const img = await fetchImage(url);
-  if (env.GEMINI_API_KEY) {
+  const img = await fetchImage(env, url);
+  if (env.GEMINI_API_KEY && Date.now() > geminiSkipUntil) {
     try {
       const text = await viaGemini(env, system, question, img);
       if (text) return text;
       throw new Error("Gemini trả về rỗng");
     } catch (e) {
       // Gemini quota/key/model problem: fall back to Workers AI instead of failing the photo
-      trace("vision.gemini.error", { message: String(e && e.message).slice(0, 300) });
-      await logEvent(env, "vision.gemini.error", String(e && e.message));
+      const msg = String((e && e.message) || e);
+      if (LOCATION_BLOCKED.test(msg)) geminiSkipUntil = Date.now() + 15 * 60 * 1000;
+      trace("vision.gemini.error", { message: msg.slice(0, 300) });
+      await logEvent(env, "vision.gemini.error", msg);
     }
   }
   try {
